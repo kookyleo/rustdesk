@@ -274,8 +274,6 @@ impl<T: Subscriber + From<ConnInner>> ServiceTmpl<T> {
                     if let Err(err) = callback(sp.clone(), &mut state) {
                         log::error!("Error of {} service: {}", sp.name(), err);
                         thread::sleep(time::Duration::from_millis(MAX_ERROR_TIMEOUT));
-                        #[cfg(windows)]
-                        crate::platform::windows::try_change_desktop();
                     }
                 } else if may_reset {
                     state.reset();
@@ -315,8 +313,6 @@ impl<T: Subscriber + From<ConnInner>> ServiceTmpl<T> {
                             error_timeout = MAX_ERROR_TIMEOUT;
                         }
                         thread::sleep(time::Duration::from_millis(error_timeout));
-                        #[cfg(windows)]
-                        crate::platform::windows::try_change_desktop();
                     } else {
                         log::debug!("Exit {} service inner loop", sp.name());
                     }

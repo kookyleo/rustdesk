@@ -26,10 +26,7 @@ const MSG_TO_RUSTDESK_SIGNATURE_VERIFICATION: &str = "signature_verification";
 #[allow(dead_code)]
 const MSG_TO_UI_FLUTTER_CHANNEL_MAIN: u16 = 0x01 << 0;
 #[allow(dead_code)]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const MSG_TO_UI_FLUTTER_CHANNEL_CM: u16 = 0x01 << 1;
-#[cfg(any(target_os = "android", target_os = "ios"))]
-const MSG_TO_UI_FLUTTER_CHANNEL_CM: u16 = 0x01;
 const MSG_TO_UI_FLUTTER_CHANNEL_REMOTE: u16 = 0x01 << 2;
 #[allow(dead_code)]
 const MSG_TO_UI_FLUTTER_CHANNEL_TRANSFER: u16 = 0x01 << 3;

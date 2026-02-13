@@ -1,6 +1,4 @@
 use hbb_common::{bail, libc, log, ResultType};
-#[cfg(target_os = "windows")]
-use std::env;
 use std::{
     ffi::{c_char, c_int, c_void, CStr},
     path::PathBuf,
@@ -119,19 +117,6 @@ pub fn init() {
 }
 
 #[inline]
-#[cfg(target_os = "windows")]
-fn get_share_dir() -> ResultType<PathBuf> {
-    Ok(PathBuf::from(env::var("ProgramData")?))
-}
-
-#[inline]
-#[cfg(target_os = "linux")]
-fn get_share_dir() -> ResultType<PathBuf> {
-    Ok(PathBuf::from("/usr/share"))
-}
-
-#[inline]
-#[cfg(target_os = "macos")]
 fn get_share_dir() -> ResultType<PathBuf> {
     Ok(PathBuf::from("/Library/Application Support"))
 }

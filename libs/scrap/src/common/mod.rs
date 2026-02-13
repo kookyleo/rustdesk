@@ -6,44 +6,16 @@ use hbb_common::{
 };
 use std::{ffi::c_void, slice};
 
-cfg_if! {
-    if #[cfg(quartz)] {
-        mod quartz;
-        pub use self::quartz::*;
-    } else if #[cfg(x11)] {
-        cfg_if! {
-            if #[cfg(feature="wayland")] {
-                mod linux;
-                mod wayland;
-                mod x11;
-                pub use self::linux::*;
-                pub use self::wayland::set_map_err;
-                pub use self::x11::PixelBuffer;
-            } else {
-                mod x11;
-                pub use self::x11::*;
-            }
-        }
-    } else if #[cfg(dxgi)] {
-        mod dxgi;
-        pub use self::dxgi::*;
-    } else if #[cfg(target_os = "android")] {
-        mod android;
-        pub use self::android::*;
-    }else {
-        //TODO: Fallback implementation.
-    }
-}
+#[cfg(quartz)]
+mod quartz;
+#[cfg(quartz)]
+pub use self::quartz::*;
 
 pub mod codec;
 pub mod convert;
 #[cfg(feature = "hwcodec")]
 pub mod hwcodec;
-#[cfg(feature = "mediacodec")]
-pub mod mediacodec;
 pub mod vpxcodec;
-#[cfg(feature = "vram")]
-pub mod vram;
 pub use self::convert::*;
 pub const STRIDE_ALIGN: usize = 64; // commonly used in libvpx vpx_img_alloc caller
 pub const HW_STRIDE_ALIGN: usize = 0; // recommended by av_frame_get_buffer
@@ -127,37 +99,8 @@ pub fn would_block_if_equal(old: &mut Vec<u8>, b: &[u8]) -> std::io::Result<()> 
 }
 
 pub trait TraitCapturer {
-    // We doesn't support
     #[cfg(not(any(target_os = "ios")))]
     fn frame<'a>(&'a mut self, timeout: std::time::Duration) -> std::io::Result<Frame<'a>>;
-
-    #[cfg(windows)]
-    fn is_gdi(&self) -> bool;
-    #[cfg(windows)]
-    fn set_gdi(&mut self) -> bool;
-
-    #[cfg(feature = "vram")]
-    fn device(&self) -> AdapterDevice;
-
-    #[cfg(feature = "vram")]
-    fn set_output_texture(&mut self, texture: bool);
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct AdapterDevice {
-    pub device: *mut c_void,
-    pub vendor_id: ::std::os::raw::c_uint,
-    pub luid: i64,
-}
-
-impl Default for AdapterDevice {
-    fn default() -> Self {
-        Self {
-            device: std::ptr::null_mut(),
-            vendor_id: Default::default(),
-            luid: Default::default(),
-        }
-    }
 }
 
 pub trait TraitPixelBuffer {
@@ -259,23 +202,6 @@ pub struct EncodeYuvFormat {
     pub v: usize,
 }
 
-#[cfg(x11)]
-#[inline]
-pub fn is_x11() -> bool {
-    hbb_common::platform::linux::is_x11_or_headless()
-}
-
-#[cfg(x11)]
-#[inline]
-pub fn is_cursor_embedded() -> bool {
-    if is_x11() {
-        x11::IS_CURSOR_EMBEDDED
-    } else {
-        false
-    }
-}
-
-#[cfg(not(x11))]
 #[inline]
 pub fn is_cursor_embedded() -> bool {
     false
@@ -536,12 +462,3 @@ pub trait GoogleImage {
     }
 }
 
-#[cfg(target_os = "android")]
-pub fn screen_size() -> (u16, u16, u16) {
-    SCREEN_SIZE.lock().unwrap().clone()
-}
-
-#[cfg(target_os = "android")]
-pub fn is_start() -> Option<bool> {
-    android::is_start()
-}

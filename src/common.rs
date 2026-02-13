@@ -2,13 +2,13 @@ use std::{
     collections::HashMap,
     future::Future,
     net::{SocketAddr, ToSocketAddrs},
+    process::{Child, Command},
     sync::{Arc, Mutex, RwLock},
     task::Poll,
 };
 
 use serde_json::{json, Map, Value};
 
-#[cfg(not(target_os = "ios"))]
 use hbb_common::whoami;
 use hbb_common::{
     allow_err,
@@ -122,12 +122,6 @@ impl Drop for SimpleCallOnReturn {
 }
 
 pub fn global_init() -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        if !crate::platform::linux::is_x11() {
-            crate::server::wayland::init();
-        }
-    }
     true
 }
 
@@ -210,14 +204,7 @@ pub fn is_server() -> bool {
 
 #[inline]
 pub fn need_fs_cm_send_files() -> bool {
-    #[cfg(windows)]
-    {
-        is_server()
-    }
-    #[cfg(not(windows))]
-    {
-        false
-    }
+    false
 }
 
 #[inline]
@@ -261,37 +248,13 @@ pub fn set_sound_input(device: String) {
 }
 
 /// Get system's default sound input device name.
-#[inline]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn get_default_sound_input() -> Option<String> {
-    #[cfg(not(target_os = "linux"))]
-    {
-        use cpal::traits::{DeviceTrait, HostTrait};
-        let host = cpal::default_host();
-        let dev = host.default_input_device();
-        return if let Some(dev) = dev {
-            match dev.name() {
-                Ok(name) => Some(name),
-                Err(_) => None,
-            }
-        } else {
-            None
-        };
+    use cpal::traits::{DeviceTrait, HostTrait};
+    let host = cpal::default_host();
+    let dev = host.default_input_device();
+    if let Some(dev) = dev {
+        return dev.name().ok();
     }
-    #[cfg(target_os = "linux")]
-    {
-        let input = crate::platform::linux::get_default_pa_source();
-        return if let Some(input) = input {
-            Some(input.1)
-        } else {
-            None
-        };
-    }
-}
-
-#[inline]
-#[cfg(any(target_os = "android", target_os = "ios"))]
-pub fn get_default_sound_input() -> Option<String> {
     None
 }
 
@@ -590,7 +553,6 @@ pub fn test_nat_type() {
         }
         IS_RUNNING.store(true, Ordering::SeqCst);
 
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         crate::ipc::get_socks_ws();
         let is_direct = Config::get_socks().is_none() && !config::use_ws();
         if !is_direct {
@@ -684,16 +646,7 @@ async fn test_nat_type_() -> ResultType<bool> {
 }
 
 pub async fn get_rendezvous_server(ms_timeout: u64) -> (String, Vec<String>, bool) {
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    let (mut a, mut b) = get_rendezvous_server_(ms_timeout);
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let (mut a, mut b) = get_rendezvous_server_(ms_timeout).await;
-    #[cfg(windows)]
-    if let Ok(lic) = crate::platform::get_license_from_exe_name() {
-        if !lic.host.is_empty() {
-            a = lic.host;
-        }
-    }
     let mut b: Vec<String> = b
         .drain(..)
         .map(|x| socket_client::check_port(x, config::RENDEZVOUS_PORT))
@@ -709,28 +662,11 @@ pub async fn get_rendezvous_server(ms_timeout: u64) -> (String, Vec<String>, boo
 }
 
 #[inline]
-#[cfg(any(target_os = "android", target_os = "ios"))]
-fn get_rendezvous_server_(_ms_timeout: u64) -> (String, Vec<String>) {
-    (
-        Config::get_rendezvous_server(),
-        Config::get_rendezvous_servers(),
-    )
-}
-
-#[inline]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 async fn get_rendezvous_server_(ms_timeout: u64) -> (String, Vec<String>) {
     crate::ipc::get_rendezvous_server(ms_timeout).await
 }
 
 #[inline]
-#[cfg(any(target_os = "android", target_os = "ios"))]
-pub async fn get_nat_type(_ms_timeout: u64) -> i32 {
-    Config::get_nat_type()
-}
-
-#[inline]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub async fn get_nat_type(ms_timeout: u64) -> i32 {
     crate::ipc::get_nat_type(ms_timeout).await
 }
@@ -770,9 +706,6 @@ pub fn test_rendezvous_server() {
 }
 
 pub fn refresh_rendezvous_server() {
-    #[cfg(any(target_os = "android", target_os = "ios", feature = "cli"))]
-    test_rendezvous_server();
-    #[cfg(not(any(target_os = "android", target_os = "ios", feature = "cli")))]
     std::thread::spawn(|| {
         if crate::ipc::test_rendezvous_server().is_err() {
             test_rendezvous_server();
@@ -780,57 +713,24 @@ pub fn refresh_rendezvous_server() {
     });
 }
 
-pub fn run_me<T: AsRef<std::ffi::OsStr>>(args: Vec<T>) -> std::io::Result<std::process::Child> {
-    #[cfg(target_os = "linux")]
-    if let Ok(appdir) = std::env::var("APPDIR") {
-        let appimage_cmd = std::path::Path::new(&appdir).join("AppRun");
-        if appimage_cmd.exists() {
-            log::info!("path: {:?}", appimage_cmd);
-            return std::process::Command::new(appimage_cmd).args(&args).spawn();
-        }
-    }
+pub fn run_me<T: AsRef<std::ffi::OsStr>>(args: Vec<T>) -> std::io::Result<Child> {
     let cmd = std::env::current_exe()?;
-    let mut cmd = std::process::Command::new(cmd);
-    #[cfg(windows)]
-    let mut force_foreground = false;
-    #[cfg(windows)]
-    {
-        let arg_strs = args
-            .iter()
-            .map(|x| x.as_ref().to_string_lossy())
-            .collect::<Vec<_>>();
-        if arg_strs == vec!["--install"] || arg_strs == &["--noinstall"] {
-            cmd.env(crate::platform::SET_FOREGROUND_WINDOW, "1");
-            force_foreground = true;
-        }
-    }
+    let mut cmd = Command::new(cmd);
     let result = cmd.args(&args).spawn();
-    match result.as_ref() {
-        Ok(_child) =>
-        {
-            #[cfg(windows)]
-            if force_foreground {
-                unsafe { winapi::um::winuser::AllowSetForegroundWindow(_child.id() as u32) };
-            }
-        }
-        Err(err) => log::error!("run_me: {err:?}"),
+    if let Err(err) = result.as_ref() {
+        log::error!("run_me: {err:?}");
     }
     result
 }
 
 #[inline]
 pub fn username() -> String {
-    // fix bug of whoami
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    return whoami::username().trim_end_matches('\0').to_owned();
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    return DEVICE_NAME.lock().unwrap().clone();
+    whoami::username().trim_end_matches('\0').to_owned()
 }
 
 // Exactly the implementation of "whoami::hostname()".
 // This wrapper is to suppress warnings.
 #[inline(always)]
-#[cfg(not(target_os = "ios"))]
 pub fn whoami_hostname() -> String {
     let mut hostname = whoami::fallible::hostname().unwrap_or_else(|_| "localhost".to_string());
     hostname.make_ascii_lowercase();
@@ -839,19 +739,11 @@ pub fn whoami_hostname() -> String {
 
 #[inline]
 pub fn hostname() -> String {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        #[allow(unused_mut)]
-        let mut name = whoami_hostname();
-        // some time, there is .local, some time not, so remove it for osx
-        #[cfg(target_os = "macos")]
-        if name.ends_with(".local") {
-            name = name.trim_end_matches(".local").to_owned();
-        }
-        name
+    let mut name = whoami_hostname();
+    if name.ends_with(".local") {
+        name = name.trim_end_matches(".local").to_owned();
     }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    return DEVICE_NAME.lock().unwrap().clone();
+    name
 }
 
 #[inline]
@@ -876,14 +768,7 @@ pub fn get_sysinfo() -> serde_json::Value {
     let num_pcpus = num_cpus::get_physical();
     let mut os = system.distribution_id();
     os = format!("{} / {}", os, system.long_os_version().unwrap_or_default());
-    #[cfg(windows)]
-    {
-        os = format!("{os} - {}", system.os_version().unwrap_or_default());
-    }
     let hostname = hostname(); // sys.hostname() return localhost on android in my test
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    let out;
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let mut out;
     out = json!({
         "cpu": format!("{cpu}{num_cpus}/{num_pcpus} cores"),
@@ -891,12 +776,9 @@ pub fn get_sysinfo() -> serde_json::Value {
         "os": os,
         "hostname": hostname,
     });
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        let username = crate::platform::get_active_username();
-        if !username.is_empty() && (!cfg!(windows) || username != "SYSTEM") {
-            out["username"] = json!(username);
-        }
+    let username = crate::platform::get_active_username();
+    if !username.is_empty() {
+        out["username"] = json!(username);
     }
     out
 }
@@ -1029,12 +911,6 @@ pub fn is_setup(name: &str) -> bool {
 }
 
 pub fn get_custom_rendezvous_server(custom: String) -> String {
-    #[cfg(windows)]
-    if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {
-        if !lic.host.is_empty() {
-            return lic.host.clone();
-        }
-    }
     if !custom.is_empty() {
         return custom;
     }
@@ -1063,12 +939,6 @@ pub fn get_api_server(api: String, custom: String) -> String {
 }
 
 fn get_api_server_(api: String, custom: String) -> String {
-    #[cfg(windows)]
-    if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {
-        if !lic.api.is_empty() {
-            return lic.api.clone();
-        }
-    }
     if !api.is_empty() {
         return api.to_owned();
     }
@@ -1494,7 +1364,6 @@ pub fn make_empty_dirs_response_to_json(res: &ReadEmptyDirsResponse) -> String {
 /// 1. Try to send the url scheme from ipc.
 /// 2. If failed to send the url scheme, we open a new main window to handle this url scheme.
 pub fn handle_url_scheme(url: String) {
-    #[cfg(not(target_os = "ios"))]
     if let Err(err) = crate::ipc::send_url_scheme(url.clone()) {
         log::debug!("Send the url to the existing flutter process failed, {}. Let's open a new program to handle this.", err);
         let _ = crate::run_me(vec![url]);
@@ -1514,15 +1383,6 @@ pub fn decode64<T: AsRef<[u8]>>(input: T) -> Result<Vec<u8>, base64::DecodeError
 }
 
 pub async fn get_key(sync: bool) -> String {
-    #[cfg(windows)]
-    if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {
-        if !lic.key.is_empty() {
-            return lic.key;
-        }
-    }
-    #[cfg(target_os = "ios")]
-    let mut key = Config::get_option("key");
-    #[cfg(not(target_os = "ios"))]
     let mut key = if sync {
         Config::get_option("key")
     } else {
@@ -1573,37 +1433,8 @@ pub async fn get_next_nonkeyexchange_msg(
     None
 }
 
-#[cfg(all(target_os = "windows", not(target_pointer_width = "64")))]
-pub fn check_process(arg: &str, same_session_id: bool) -> bool {
-    let mut path = std::env::current_exe().unwrap_or_default();
-    if let Ok(linked) = path.read_link() {
-        path = linked;
-    }
-    let Some(filename) = path.file_name() else {
-        return false;
-    };
-    let filename = filename.to_string_lossy().to_string();
-    match crate::platform::windows::get_pids_with_first_arg_check_session(
-        &filename,
-        arg,
-        same_session_id,
-    ) {
-        Ok(pids) => {
-            let self_pid = hbb_common::sysinfo::Pid::from_u32(std::process::id());
-            pids.into_iter().filter(|pid| *pid != self_pid).count() > 0
-        }
-        Err(e) => {
-            log::error!("Failed to check process with arg: \"{}\", {}", arg, e);
-            false
-        }
-    }
-}
-
 #[allow(unused_mut)]
-#[cfg(not(all(target_os = "windows", not(target_pointer_width = "64"))))]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn check_process(arg: &str, mut same_uid: bool) -> bool {
-    #[cfg(target_os = "macos")]
     if !crate::platform::is_root() && !same_uid {
         log::warn!("Can not get other process's command line arguments on macos without root");
         same_uid = true;
@@ -1863,7 +1694,6 @@ fn read_custom_client_advanced_settings(
 }
 
 #[inline]
-#[cfg(target_os = "macos")]
 pub fn get_dst_align_rgba() -> usize {
     // https://developer.apple.com/forums/thread/712709
     // Memory alignment should be multiple of 64.
@@ -1872,12 +1702,6 @@ pub fn get_dst_align_rgba() -> usize {
     } else {
         1
     }
-}
-
-#[inline]
-#[cfg(not(target_os = "macos"))]
-pub fn get_dst_align_rgba() -> usize {
-    1
 }
 
 pub fn read_custom_client(config: &str) {

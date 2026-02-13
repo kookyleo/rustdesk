@@ -4,41 +4,18 @@ use std::{
     println,
 };
 
-#[cfg(all(target_os = "linux", feature = "linux-pkg-config"))]
-fn link_pkg_config(name: &str) -> Vec<PathBuf> {
-    // sometimes an override is needed
-    let pc_name = match name {
-        "libvpx" => "vpx",
-        _ => name,
-    };
-    let lib = pkg_config::probe_library(pc_name)
-        .expect(format!(
-            "unable to find '{pc_name}' development headers with pkg-config (feature linux-pkg-config is enabled).
-            try installing '{pc_name}-dev' from your system package manager.").as_str());
-
-    lib.include_paths
-}
-#[cfg(not(all(target_os = "linux", feature = "linux-pkg-config")))]
-fn link_pkg_config(_name: &str) -> Vec<PathBuf> {
-    unimplemented!()
-}
-
 /// Link vcpkg package.
 fn link_vcpkg(mut path: PathBuf, name: &str) -> PathBuf {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
     let mut target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap();
     if target_arch == "x86_64" {
         target_arch = "x64".to_owned();
-    } else if target_arch == "x86" {
-        target_arch = "x86".to_owned();
-    } else if target_arch == "loongarch64" {
-        target_arch = "loongarch64".to_owned();
     } else if target_arch == "aarch64" {
         target_arch = "arm64".to_owned();
     } else {
         target_arch = "arm".to_owned();
     }
-    let mut target = if target_os == "macos" {
+    let target = if target_os == "macos" {
         if target_arch == "x64" {
             "x64-osx".to_owned()
         } else if target_arch == "arm64" {
@@ -46,14 +23,9 @@ fn link_vcpkg(mut path: PathBuf, name: &str) -> PathBuf {
         } else {
             format!("{}-{}", target_arch, target_os)
         }
-    } else if target_os == "windows" {
-        "x64-windows-static".to_owned()
     } else {
         format!("{}-{}", target_arch, target_os)
     };
-    if target_arch == "x86" {
-        target = target.replace("x64", "x86");
-    }
     println!("cargo:info={}", target);
     if let Ok(vcpkg_root) = std::env::var("VCPKG_INSTALLED_ROOT") {
         path = vcpkg_root.into();
@@ -120,16 +92,8 @@ fn link_homebrew_m1(name: &str) -> PathBuf {
 }
 
 /// Find package. By default, it will try to find vcpkg first, then homebrew(currently only for Mac M1).
-/// If building for linux and feature "linux-pkg-config" is enabled, will try to use pkg-config
-/// unless check fails (e.g. NO_PKG_CONFIG_libyuv=1)
 fn find_package(name: &str) -> Vec<PathBuf> {
-    let no_pkg_config_var_name = format!("NO_PKG_CONFIG_{name}");
-    println!("cargo:rerun-if-env-changed={no_pkg_config_var_name}");
-    if cfg!(all(target_os = "linux", feature = "linux-pkg-config"))
-        && std::env::var(no_pkg_config_var_name).as_deref() != Ok("1")
-    {
-        link_pkg_config(name)
-    } else if let Ok(vcpkg_root) = std::env::var("VCPKG_ROOT") {
+    if let Ok(vcpkg_root) = std::env::var("VCPKG_ROOT") {
         vec![link_vcpkg(vcpkg_root.into(), name)]
     } else {
         // Try using homebrew
@@ -180,52 +144,6 @@ fn gen_vcpkg_package(package: &str, ffi_header: &str, generated: &str, regex: &s
     generate_bindings(&ffi_header, &includes, &ffi_rs, &exact_file, regex);
 }
 
-// If you have problems installing ffmpeg, you can download $VCPKG_ROOT/installed from ci
-// Linux require link in hwcodec
-/*
-fn ffmpeg() {
-    // ffmpeg
-    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
-    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap();
-    let static_libs = vec!["avcodec", "avutil", "avformat"];
-    static_libs.iter().for_each(|lib| {
-        find_package(lib);
-    });
-    if target_os == "windows" {
-        println!("cargo:rustc-link-lib=static=libmfx");
-    }
-
-    // os
-    let dyn_libs: Vec<&str> = if target_os == "windows" {
-        ["User32", "bcrypt", "ole32", "advapi32"].to_vec()
-    } else if target_os == "linux" {
-        let mut v = ["va", "va-drm", "va-x11", "vdpau", "X11", "stdc++"].to_vec();
-        if target_arch == "x86_64" {
-            v.push("z");
-        }
-        v
-    } else if target_os == "macos" || target_os == "ios" {
-        ["c++", "m"].to_vec()
-    } else if target_os == "android" {
-        ["z", "m", "android", "atomic"].to_vec()
-    } else {
-        panic!("unsupported os");
-    };
-    dyn_libs
-        .iter()
-        .map(|lib| println!("cargo:rustc-link-lib={}", lib))
-        .count();
-
-    if target_os == "macos" || target_os == "ios" {
-        println!("cargo:rustc-link-lib=framework=CoreFoundation");
-        println!("cargo:rustc-link-lib=framework=CoreVideo");
-        println!("cargo:rustc-link-lib=framework=CoreMedia");
-        println!("cargo:rustc-link-lib=framework=VideoToolbox");
-        println!("cargo:rustc-link-lib=framework=AVFoundation");
-    }
-}
-*/
-
 fn main() {
     // in this crate, these are also valid configurations
     println!("cargo:rustc-check-cfg=cfg(dxgi,quartz,x11)");
@@ -233,10 +151,6 @@ fn main() {
     // there is problem with cfg(target_os) in build.rs, so use our workaround
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
 
-    // note: all link symbol names in x86 (32-bit) are prefixed wth "_".
-    // run "rustup show" to show current default toolchain, if it is stable-x86-pc-windows-msvc,
-    // please install x64 toolchain by "rustup toolchain install stable-x86_64-pc-windows-msvc",
-    // then set x64 to default by "rustup default stable-x86_64-pc-windows-msvc"
     let target = target_build_utils::TargetInfo::new();
     if target.unwrap().target_pointer_width() != "64" {
         // panic!("Only support 64bit system");
@@ -248,20 +162,11 @@ fn main() {
     gen_vcpkg_package("libvpx", "vpx_ffi.h", "vpx_ffi.rs", "^[vV].*");
     gen_vcpkg_package("aom", "aom_ffi.h", "aom_ffi.rs", "^(aom|AOM|OBU|AV1).*");
     gen_vcpkg_package("libyuv", "yuv_ffi.h", "yuv_ffi.rs", ".*");
-    // ffmpeg();
 
     if target_os == "ios" {
         // nothing
-    } else if target_os == "android" {
-        println!("cargo:rustc-cfg=android");
-    } else if cfg!(windows) {
-        // The first choice is Windows because DXGI is amazing.
-        println!("cargo:rustc-cfg=dxgi");
     } else if cfg!(target_os = "macos") {
         // Quartz is second because macOS is the (annoying) exception.
         println!("cargo:rustc-cfg=quartz");
-    } else if cfg!(unix) {
-        // On UNIX we pray that X11 (with XCB) is available.
-        println!("cargo:rustc-cfg=x11");
     }
 }

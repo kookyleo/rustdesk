@@ -4,9 +4,6 @@ use std::{
     path::Path,
 };
 
-#[cfg(windows)]
-const BIN_DATA: &[u8] = include_bytes!("../data.bin");
-#[cfg(not(windows))]
 const BIN_DATA: &[u8] = &[];
 // 4bytes
 const LENGTH: usize = 4;
@@ -119,21 +116,5 @@ impl BinaryReader {
         // executable
         let executable = String::from_utf8_lossy(&BIN_DATA[base..]).to_string();
         (parsed, executable)
-    }
-
-    #[cfg(linux)]
-    pub fn configure_permission(&self, prefix: &Path) {
-        use std::os::unix::prelude::PermissionsExt;
-
-        let exe_path = prefix.join(&self.exe);
-        if exe_path.exists() {
-            if let Ok(f) = File::open(exe_path) {
-                if let Ok(meta) = f.metadata() {
-                    let mut permissions = meta.permissions();
-                    permissions.set_mode(0o755);
-                    f.set_permissions(permissions).ok();
-                }
-            }
-        }
     }
 }

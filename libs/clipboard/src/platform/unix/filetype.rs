@@ -11,7 +11,6 @@ use std::{
 };
 use utf16string::WStr;
 
-#[cfg(target_os = "linux")]
 pub type Inode = u64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

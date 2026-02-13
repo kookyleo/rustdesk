@@ -64,10 +64,6 @@ impl RendezvousMediator {
             }
         }
         crate::hbbs_http::sync::start();
-        #[cfg(target_os = "windows")]
-        if crate::platform::is_installed() && crate::is_server() && !crate::is_custom_client() {
-            crate::updater::start_auto_update();
-        }
         check_zombie();
         let server = new_server();
         if config::option2bool("stop-service", &Config::get_option("stop-service")) {
@@ -77,19 +73,11 @@ impl RendezvousMediator {
         tokio::spawn(async move {
             direct_server(server_cloned).await;
         });
-        #[cfg(target_os = "android")]
-        let start_lan_listening = true;
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let start_lan_listening = crate::platform::is_installed();
         if start_lan_listening {
             std::thread::spawn(move || {
                 allow_err!(super::lan::start_listening());
             });
-        }
-        // It is ok to run xdesktop manager when the headless function is not allowed.
-        #[cfg(target_os = "linux")]
-        if crate::is_server() {
-            crate::platform::linux_desktop_manager::start_xdesktop();
         }
         scrap::codec::test_av1();
         loop {
@@ -228,8 +216,6 @@ impl RendezvousMediator {
                     let now = Some(Instant::now());
                     let expired = last_register_resp.map(|x| x.elapsed().as_millis() as i64 >= REG_INTERVAL).unwrap_or(true);
                     let timeout = last_register_sent.map(|x| x.elapsed().as_millis() as i64 >= reg_timeout).unwrap_or(false);
-                    // temporarily disable exponential backoff for android before we add wakeup trigger to force connect in android
-                    #[cfg(not(any(target_os = "android", target_os = "ios")))]
                     if crate::using_public_server() { // only turn on this for public server, may help DDNS self-hosting user.
                         if timeout && reg_timeout < MAX_REG_TIMEOUT {
                             reg_timeout += MIN_REG_TIMEOUT;

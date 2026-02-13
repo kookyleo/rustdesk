@@ -327,8 +327,7 @@ impl VideoQoS {
             user.delay.fps = Some(fps);
         }
         self.adjust_fps();
-        if adjust_ratio && !cfg!(target_os = "linux") {
-            //Reduce the possibility of vaapi being created twice
+        if adjust_ratio {
             self.adjust_ratio(false);
         }
     }

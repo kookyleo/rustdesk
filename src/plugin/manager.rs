@@ -20,11 +20,6 @@ const MSG_TO_UI_PLUGIN_MANAGER_UNINSTALL: &str = "plugin_uninstall";
 
 const IPC_PLUGIN_POSTFIX: &str = "_plugin";
 
-#[cfg(target_os = "windows")]
-const PLUGIN_PLATFORM: &str = "windows";
-#[cfg(target_os = "linux")]
-const PLUGIN_PLATFORM: &str = "linux";
-#[cfg(target_os = "macos")]
 const PLUGIN_PLATFORM: &str = "macos";
 
 lazy_static::lazy_static! {
@@ -160,35 +155,6 @@ pub fn load_plugin_list() {
     *plugin_info_lock = plugins;
 }
 
-#[cfg(target_os = "windows")]
-fn elevate_install(
-    plugin_id: &str,
-    plugin_url: &str,
-    same_plugin_exists: bool,
-) -> ResultType<bool> {
-    // to-do: Support args with space in quotes. 'arg 1' and "arg 2"
-    let args = if same_plugin_exists {
-        format!("--plugin-install {}", plugin_id)
-    } else {
-        format!("--plugin-install {} {}", plugin_id, plugin_url)
-    };
-    crate::platform::elevate(&args)
-}
-
-#[cfg(target_os = "linux")]
-fn elevate_install(
-    plugin_id: &str,
-    plugin_url: &str,
-    same_plugin_exists: bool,
-) -> ResultType<bool> {
-    let mut args = vec!["--plugin-install", plugin_id];
-    if !same_plugin_exists {
-        args.push(&plugin_url);
-    }
-    crate::platform::elevate(args)
-}
-
-#[cfg(target_os = "macos")]
 fn elevate_install(
     plugin_id: &str,
     plugin_url: &str,
@@ -202,19 +168,6 @@ fn elevate_install(
 }
 
 #[inline]
-#[cfg(target_os = "windows")]
-fn elevate_uninstall(plugin_id: &str) -> ResultType<bool> {
-    crate::platform::elevate(&format!("--plugin-uninstall {}", plugin_id))
-}
-
-#[inline]
-#[cfg(target_os = "linux")]
-fn elevate_uninstall(plugin_id: &str) -> ResultType<bool> {
-    crate::platform::elevate(vec!["--plugin-uninstall", plugin_id])
-}
-
-#[inline]
-#[cfg(target_os = "macos")]
 fn elevate_uninstall(plugin_id: &str) -> ResultType<bool> {
     crate::platform::elevate(
         vec!["--plugin-uninstall", plugin_id],
@@ -395,7 +348,6 @@ async fn handle_conn(mut stream: crate::ipc::Connection) {
     }
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tokio::main]
 pub async fn start_ipc() {
     match crate::ipc::new_listener(IPC_PLUGIN_POSTFIX).await {

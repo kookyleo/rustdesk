@@ -1,12 +1,4 @@
 use crate::ui_interface::get_option;
-#[cfg(windows)]
-use crate::{
-    display_service,
-    ipc::{connect, Data},
-    platform::is_installed,
-};
-#[cfg(windows)]
-use hbb_common::tokio;
 use hbb_common::{anyhow::anyhow, bail, lazy_static, tokio::sync::oneshot, ResultType};
 use serde_derive::{Deserialize, Serialize};
 use std::{
@@ -14,33 +6,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-#[cfg(windows)]
-pub mod win_exclude_from_capture;
-#[cfg(windows)]
-mod win_input;
-#[cfg(windows)]
-pub mod win_mag;
-#[cfg(windows)]
-pub mod win_topmost_window;
-
-#[cfg(target_os = "macos")]
 pub mod macos;
-
-#[cfg(windows)]
-mod win_virtual_display;
-#[cfg(windows)]
-pub use win_virtual_display::restore_reg_connectivity;
 
 pub const INVALID_PRIVACY_MODE_CONN_ID: i32 = 0;
 pub const OCCUPIED: &'static str = "Privacy occupied by another one.";
 pub const TURN_OFF_OTHER_ID: &'static str =
     "Failed to turn off privacy mode that belongs to someone else.";
-pub const NO_PHYSICAL_DISPLAYS: &'static str = "no_need_privacy_mode_no_physical_displays_tip";
-
-pub const PRIVACY_MODE_IMPL_WIN_MAG: &str = "privacy_mode_impl_mag";
-pub const PRIVACY_MODE_IMPL_WIN_EXCLUDE_FROM_CAPTURE: &str =
-    "privacy_mode_impl_exclude_from_capture";
-pub const PRIVACY_MODE_IMPL_WIN_VIRTUAL_DISPLAY: &str = "privacy_mode_impl_virtual_display";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "t", content = "c")]
@@ -90,33 +61,7 @@ pub trait PrivacyMode: Sync + Send {
 
 lazy_static::lazy_static! {
     pub static ref DEFAULT_PRIVACY_MODE_IMPL: String = {
-        #[cfg(windows)]
-        {
-            if win_exclude_from_capture::is_supported() {
-                PRIVACY_MODE_IMPL_WIN_EXCLUDE_FROM_CAPTURE
-            } else {
-                if display_service::is_privacy_mode_mag_supported() {
-                    PRIVACY_MODE_IMPL_WIN_MAG
-                } else {
-                    if is_installed() {
-                        PRIVACY_MODE_IMPL_WIN_VIRTUAL_DISPLAY
-                    } else {
-                        ""
-                    }
-                }
-            }.to_owned()
-        }
-        #[cfg(not(windows))]
-        {
-            #[cfg(target_os = "macos")]
-            {
-                macos::PRIVACY_MODE_IMPL.to_owned()
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                "".to_owned()
-            }
-        }
+        macos::PRIVACY_MODE_IMPL.to_owned()
     };
 
     static ref PRIVACY_MODE: Arc<Mutex<Option<Box<dyn PrivacyMode>>>> = {
@@ -136,32 +81,10 @@ lazy_static::lazy_static! {
 pub type PrivacyModeCreator = fn(impl_key: &str) -> Box<dyn PrivacyMode>;
 lazy_static::lazy_static! {
     static ref PRIVACY_MODE_CREATOR: Arc<Mutex<HashMap<&'static str, PrivacyModeCreator>>> = {
-        #[cfg(not(windows))]
         let mut map: HashMap<&'static str, PrivacyModeCreator> = HashMap::new();
-        #[cfg(target_os = "macos")]
-        {
-            map.insert(macos::PRIVACY_MODE_IMPL, |impl_key: &str| {
-                Box::new(macos::PrivacyModeImpl::new(impl_key))
-            });
-        }
-        #[cfg(windows)]
-        let mut map: HashMap<&'static str, PrivacyModeCreator> = HashMap::new();
-        #[cfg(windows)]
-        {
-            if win_exclude_from_capture::is_supported() {
-                map.insert(win_exclude_from_capture::PRIVACY_MODE_IMPL, |impl_key: &str| {
-                    Box::new(win_exclude_from_capture::PrivacyModeImpl::new(impl_key))
-                });
-            } else {
-                map.insert(win_mag::PRIVACY_MODE_IMPL, |impl_key: &str| {
-                    Box::new(win_mag::PrivacyModeImpl::new(impl_key))
-                });
-            }
-
-            map.insert(win_virtual_display::PRIVACY_MODE_IMPL, |impl_key: &str| {
-                    Box::new(win_virtual_display::PrivacyModeImpl::new(impl_key))
-                });
-        }
+        map.insert(macos::PRIVACY_MODE_IMPL, |impl_key: &str| {
+            Box::new(macos::PrivacyModeImpl::new(impl_key))
+        });
         Arc::new(Mutex::new(map))
     };
 }
@@ -311,55 +234,8 @@ pub fn check_on_conn_id(conn_id: i32) -> Option<ResultType<bool>> {
     )
 }
 
-#[cfg(windows)]
-#[tokio::main(flavor = "current_thread")]
-async fn set_privacy_mode_state(
-    conn_id: i32,
-    state: PrivacyModeState,
-    impl_key: String,
-    ms_timeout: u64,
-) -> ResultType<()> {
-    let mut c = connect(ms_timeout, "_cm").await?;
-    c.send(&Data::PrivacyModeState((conn_id, state, impl_key)))
-        .await
-}
-
 pub fn get_supported_privacy_mode_impl() -> Vec<(&'static str, &'static str)> {
-    #[cfg(target_os = "windows")]
-    {
-        let mut vec_impls = Vec::new();
-
-        if win_exclude_from_capture::is_supported() {
-            vec_impls.push((
-                PRIVACY_MODE_IMPL_WIN_EXCLUDE_FROM_CAPTURE,
-                "privacy_mode_impl_mag_tip",
-            ));
-        } else {
-            if display_service::is_privacy_mode_mag_supported() {
-                vec_impls.push((PRIVACY_MODE_IMPL_WIN_MAG, "privacy_mode_impl_mag_tip"));
-            }
-        }
-
-        if is_installed() && crate::platform::windows::is_self_service_running() {
-            vec_impls.push((
-                PRIVACY_MODE_IMPL_WIN_VIRTUAL_DISPLAY,
-                "privacy_mode_impl_virtual_display_tip",
-            ));
-        }
-
-        vec_impls
-    }
-    #[cfg(target_os = "macos")]
-    {
-        // No translation is intended for privacy_mode_impl_macos_tip as it is a 
-        // placeholder for macOS specific privacy mode implementation which currently
-        // doesn't provide multiple modes like Windows does.
-        vec![(macos::PRIVACY_MODE_IMPL, "privacy_mode_impl_macos_tip")]
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        Vec::new()
-    }
+    vec![(macos::PRIVACY_MODE_IMPL, "privacy_mode_impl_macos_tip")]
 }
 
 #[inline]
@@ -382,28 +258,12 @@ pub fn is_current_privacy_mode_impl(impl_key: &str) -> bool {
 }
 
 #[inline]
-#[cfg(not(windows))]
 pub fn check_privacy_mode_err(
     _privacy_mode_id: i32,
     _display_idx: usize,
     _timeout_millis: u64,
 ) -> String {
     "".to_owned()
-}
-
-#[inline]
-#[cfg(windows)]
-pub fn check_privacy_mode_err(
-    privacy_mode_id: i32,
-    display_idx: usize,
-    timeout_millis: u64,
-) -> String {
-    // win magnifier implementation requires a test of creating a capturer.
-    if is_current_privacy_mode_impl(PRIVACY_MODE_IMPL_WIN_MAG) {
-        crate::video_service::test_create_capturer(privacy_mode_id, display_idx, timeout_millis)
-    } else {
-        "".to_owned()
-    }
 }
 
 #[inline]

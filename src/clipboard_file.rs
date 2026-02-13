@@ -227,11 +227,7 @@ pub fn msg_2_clip(msg: Cliprdr) -> Option<ClipboardFile> {
 #[cfg(feature = "unix-file-copy-paste")]
 pub mod unix_file_clip {
     use super::*;
-    #[cfg(target_os = "linux")]
-    use crate::clipboard::update_clipboard_files;
     use crate::clipboard::{try_empty_clipboard_files, ClipboardSide};
-    #[cfg(target_os = "linux")]
-    use clipboard::platform::unix::fuse;
     use clipboard::platform::unix::{
         get_local_format, serv_files, FILECONTENTS_FORMAT_ID, FILECONTENTS_FORMAT_NAME,
         FILEDESCRIPTORW_FORMAT_NAME, FILEDESCRIPTOR_FORMAT_ID,
@@ -324,35 +320,6 @@ pub mod unix_file_clip {
                 // empty file list, send failure message
                 return vec![msg_resp_format_data_failure()];
             }
-            #[cfg(target_os = "linux")]
-            ClipboardFile::FormatDataResponse {
-                msg_flags,
-                format_data,
-            } => {
-                log::debug!("format data response: msg_flags: {}", msg_flags);
-
-                if msg_flags != 0x1 {
-                    // return failure message?
-                }
-
-                log::debug!("parsing file descriptors");
-                if fuse::init_fuse_context(true).is_ok() {
-                    match fuse::format_data_response_to_urls(
-                        side == ClipboardSide::Client,
-                        format_data,
-                        conn_id,
-                    ) {
-                        Ok(files) => {
-                            update_clipboard_files(files, side);
-                        }
-                        Err(e) => {
-                            log::error!("failed to parse file descriptors: {:?}", e);
-                        }
-                    }
-                } else {
-                    // send error message to server
-                }
-            }
             ClipboardFile::FileContentsRequest {
                 stream_id,
                 list_index,
@@ -381,26 +348,6 @@ pub mod unix_file_clip {
                     }
                 })
                 .collect::<_>();
-            }
-            #[cfg(target_os = "linux")]
-            ClipboardFile::FileContentsResponse {
-                msg_flags,
-                stream_id,
-                ..
-            } => {
-                log::debug!(
-                    "file contents response: msg_flags: {}, stream_id: {}",
-                    msg_flags,
-                    stream_id,
-                );
-                if fuse::init_fuse_context(true).is_ok() {
-                    hbb_common::allow_err!(fuse::handle_file_content_response(
-                        side == ClipboardSide::Client,
-                        clip
-                    ));
-                } else {
-                    // send error message to server
-                }
             }
             ClipboardFile::NotifyCallback {
                 r#type,

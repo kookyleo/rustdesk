@@ -1,7 +1,4 @@
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::keyboard::input_source::{change_input_source, get_cur_session_input_source};
-#[cfg(target_os = "linux")]
-use crate::platform::linux::is_x11;
 use crate::{
     client::file_trait::FileManager,
     common::{make_fd_to_json, make_vec_fd_to_json},
@@ -13,7 +10,6 @@ use crate::{
 };
 use flutter_rust_bridge::{StreamSink, SyncReturn};
 #[cfg(feature = "plugin_framework")]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use hbb_common::allow_err;
 use hbb_common::{
     config::{self, LocalConfig, PeerConfig, PeerInfoSerde},
@@ -39,48 +35,15 @@ lazy_static::lazy_static! {
 
 fn initialize(app_dir: &str, custom_client_config: &str) {
     flutter::async_tasks::start_flutter_async_runner();
-    // `APP_DIR` is set in `main_get_data_dir_ios()` on iOS.
-    #[cfg(not(target_os = "ios"))]
-    {
-        *config::APP_DIR.write().unwrap() = app_dir.to_owned();
-    }
+    *config::APP_DIR.write().unwrap() = app_dir.to_owned();
     // core_main's load_custom_client does not work for flutter since it is only applied to its load_library in main.c
     if custom_client_config.is_empty() {
         crate::load_custom_client();
     } else {
         crate::read_custom_client(custom_client_config);
     }
-    #[cfg(target_os = "android")]
-    {
-        // flexi_logger can't work when android_logger initialized.
-        #[cfg(debug_assertions)]
-        android_logger::init_once(
-            android_logger::Config::default()
-                .with_max_level(log::LevelFilter::Debug) // limit log level
-                .with_tag("ffi"), // logs will show under mytag tag
-        );
-        #[cfg(not(debug_assertions))]
-        hbb_common::init_log(false, "");
-        #[cfg(feature = "mediacodec")]
-        scrap::mediacodec::check_mediacodec();
-        crate::common::test_rendezvous_server();
-        crate::common::test_nat_type();
-    }
-    #[cfg(target_os = "ios")]
-    {
-        use hbb_common::env_logger::*;
-        init_from_env(Env::default().filter_or(DEFAULT_FILTER_ENV, "debug"));
-        crate::common::test_nat_type();
-    }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let _ = crate::common::global_init();
-    }
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        // core_main's init_log does not work for flutter since it is only applied to its load_library in main.c
-        hbb_common::init_log(false, "flutter_ffi");
-    }
+    // core_main's init_log does not work for flutter since it is only applied to its load_library in main.c
+    hbb_common::init_log(false, "flutter_ffi");
 }
 
 #[inline]
@@ -99,8 +62,6 @@ pub enum EventToUI {
 }
 
 pub fn host_stop_system_key_propagate(_stopped: bool) {
-    #[cfg(windows)]
-    crate::platform::windows::stop_system_key_propagate(_stopped);
 }
 
 // This function is only used to count the number of control sessions.
@@ -262,10 +223,6 @@ pub fn will_session_close_close_session(session_id: SessionID) -> SyncReturn<boo
 
 pub fn session_close(session_id: SessionID) {
     if let Some(session) = sessions::remove_session_by_session_id(&session_id) {
-        // `release_remote_keys` is not required for mobile platforms in common cases.
-        // But we still call it to make the code more stable.
-        #[cfg(any(target_os = "android", target_os = "ios"))]
-        crate::keyboard::release_remote_keys("map");
         session.close_event_stream(session_id);
         session.close();
     }
@@ -325,7 +282,6 @@ pub fn session_toggle_option(session_id: SessionID, value: String) {
         session.toggle_option(value.clone());
         try_sync_peer_option(&session, &session_id, &value, None);
     }
-    #[cfg(not(target_os = "ios"))]
     if sessions::get_session_by_session_id(&session_id).is_some() && value == "disable-clipboard" {
         crate::flutter::update_text_clipboard_required();
     }
@@ -448,10 +404,6 @@ pub fn session_set_keyboard_mode(session_id: SessionID, value: String) {
         session.save_keyboard_mode(value.clone());
         _mode_updated = true;
         try_sync_peer_option(&session, &session_id, "keyboard_mode", None);
-    }
-    #[cfg(windows)]
-    if _mode_updated {
-        crate::keyboard::update_grab_get_key_name(&value);
     }
 }
 
@@ -612,7 +564,7 @@ pub fn session_handle_flutter_raw_key_event(
 // As rust is multi-thread, it is possible that enter() is called before leave().
 // This will cause the keyboard input to take no effect.
 pub fn session_enter_or_leave(_session_id: SessionID, _enter: bool) -> SyncReturn<()> {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     if let Some(session) = sessions::get_session_by_session_id(&_session_id) {
         let keyboard_mode = session.get_keyboard_mode();
         if _enter {
@@ -920,10 +872,8 @@ pub fn session_send_selected_session_id(session_id: SessionID, sid: String) {
 }
 
 pub fn main_get_sound_inputs() -> Vec<String> {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     return get_sound_inputs();
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    vec![String::from("")]
 }
 
 pub fn main_get_login_device_info() -> SyncReturn<String> {
@@ -955,29 +905,10 @@ pub fn main_get_error() -> String {
 }
 
 pub fn main_show_option(_key: String) -> SyncReturn<bool> {
-    #[cfg(target_os = "linux")]
-    if _key.eq(config::keys::OPTION_ALLOW_LINUX_HEADLESS) {
-        return SyncReturn(true);
-    }
     SyncReturn(false)
 }
 
 pub fn main_set_option(key: String, value: String) {
-    #[cfg(target_os = "android")]
-    if key.eq(config::keys::OPTION_ENABLE_KEYBOARD) {
-        crate::ui_cm_interface::switch_permission_all(
-            "keyboard".to_owned(),
-            config::option2bool(&key, &value),
-        );
-    }
-    #[cfg(target_os = "android")]
-    if key.eq(config::keys::OPTION_ENABLE_CLIPBOARD) {
-        crate::ui_cm_interface::switch_permission_all(
-            "clipboard".to_owned(),
-            config::option2bool(&key, &value),
-        );
-    }
-
     // If `is_allow_tls_fallback` and https proxy is used, we need to restart rendezvous mediator.
     // No need to check if https proxy is used, because this option does not change frequently
     // and restarting mediator is safe even https proxy is not used.
@@ -992,10 +923,6 @@ pub fn main_set_option(key: String, value: String) {
             hbb_common::tls::reset_tls_cache();
         }
         set_option(key, value.clone());
-        #[cfg(target_os = "android")]
-        crate::rendezvous_mediator::RendezvousMediator::restart();
-        #[cfg(any(target_os = "android", target_os = "ios", feature = "cli"))]
-        crate::common::test_rendezvous_server();
     } else {
         set_option(key, value.clone());
     }
@@ -1070,22 +997,11 @@ pub fn main_get_lan_peers() -> String {
 }
 
 pub fn main_get_connect_status() -> String {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        serde_json::to_string(&get_connect_status()).unwrap_or("".to_string())
-    }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let mut state = hbb_common::config::get_online_state();
-        if state > 0 {
-            state = 1;
-        }
-        serde_json::json!({ "status_num": state }).to_string()
-    }
+    serde_json::to_string(&get_connect_status()).unwrap_or("".to_string())
 }
 
 pub fn main_check_connect_status() {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     start_option_status_sync(); // avoid multi calls
 }
 
@@ -1170,43 +1086,16 @@ pub fn main_set_local_option(key: String, value: String) {
 // 1. For get, the value is stored in the server process.
 // 2. For clear, we need to need to return the error mmsg from the server process to flutter.
 pub fn main_handle_wayland_screencast_restore_token(_key: String, _value: String) -> String {
-    #[cfg(not(target_os = "linux"))]
-    {
-        return "".to_owned();
-    }
-    #[cfg(target_os = "linux")]
-    if _value == "get" {
-        match crate::ipc::get_wayland_screencast_restore_token(_key) {
-            Ok(v) => v,
-            Err(e) => {
-                log::error!("Failed to get wayland screencast restore token, {}", e);
-                "".to_owned()
-            }
-        }
-    } else if _value == "clear" {
-        match crate::ipc::clear_wayland_screencast_restore_token(_key.clone()) {
-            Ok(true) => {
-                set_local_option(_key, "".to_owned());
-                "".to_owned()
-            }
-            Ok(false) => "Failed to clear, please try again.".to_owned(),
-            Err(e) => format!("Failed to clear, {}", e),
-        }
-    } else {
-        "".to_owned()
-    }
+    "".to_owned()
 }
 
 pub fn main_get_input_source() -> SyncReturn<String> {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let input_source = get_cur_session_input_source();
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    let input_source = "".to_owned();
     SyncReturn(input_source)
 }
 
 pub fn main_set_input_source(session_id: SessionID, value: String) {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     {
         change_input_source(session_id, value);
         if let Some(session) = sessions::get_session_by_session_id(&session_id) {
@@ -1225,15 +1114,7 @@ pub fn main_set_input_source(session_id: SessionID, value: String) {
 /// - Windows/macOS/Linux: attempts to move the cursor to (x, y)
 /// - Android/iOS: no-op, always returns `false`
 pub fn main_set_cursor_position(x: i32, y: i32) -> SyncReturn<bool> {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        SyncReturn(crate::set_cursor_pos(x, y))
-    }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let _ = (x, y);
-        SyncReturn(false)
-    }
+    SyncReturn(crate::set_cursor_pos(x, y))
 }
 
 /// Clip cursor to a rectangle (for pointer lock).
@@ -1259,7 +1140,7 @@ pub fn main_clip_cursor(
     bottom: i32,
     enable: bool,
 ) -> SyncReturn<bool> {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     {
         let rect = if enable {
             Some((left, top, right, bottom))
@@ -1267,11 +1148,6 @@ pub fn main_clip_cursor(
             None
         };
         SyncReturn(crate::clip_cursor(rect))
-    }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let _ = (left, top, right, bottom, enable);
-        SyncReturn(false)
     }
 }
 
@@ -1374,8 +1250,7 @@ pub fn main_load_recent_peers() {
             return;
         }
 
-        let load_two_times = vec_id_modified_time_path.len() > PeerConfig::BATCH_LOADING_COUNT
-            && cfg!(target_os = "windows");
+        let load_two_times = false;
         let mut all_peers = vec![];
         if load_two_times {
             let next_from = load_recent_peers(&vec_id_modified_time_path, false, &mut all_peers, 0);
@@ -1497,13 +1372,13 @@ fn main_broadcast_message(data: &HashMap<&str, &str>) {
 
 pub fn main_change_theme(dark: String) {
     main_broadcast_message(&HashMap::from([("name", "theme"), ("dark", &dark)]));
-    #[cfg(not(any(target_os = "ios")))]
+
     send_to_cm(&crate::ipc::Data::Theme(dark));
 }
 
 pub fn main_change_language(lang: String) {
     main_broadcast_message(&HashMap::from([("name", "language"), ("lang", &lang)]));
-    #[cfg(not(any(target_os = "ios")))]
+
     send_to_cm(&crate::ipc::Data::Language(lang));
 }
 
@@ -1528,43 +1403,15 @@ pub fn main_is_option_fixed(key: String) -> SyncReturn<bool> {
 }
 
 pub fn main_get_main_display() -> SyncReturn<String> {
-    #[cfg(target_os = "ios")]
-    let display_info = "".to_owned();
-    #[cfg(not(target_os = "ios"))]
     let mut display_info = "".to_owned();
-    #[cfg(not(target_os = "ios"))]
-    {
-        #[cfg(not(target_os = "linux"))]
-        let is_linux_wayland = false;
-        #[cfg(target_os = "linux")]
-        let is_linux_wayland = !is_x11();
-
-        if !is_linux_wayland {
-            if let Ok(displays) = crate::display_service::try_get_displays() {
-                // to-do: Need to detect current display index.
-                if let Some(display) = displays.iter().next() {
-                    display_info = serde_json::to_string(&HashMap::from([
-                        ("w", display.width()),
-                        ("h", display.height()),
-                    ]))
-                    .unwrap_or_default();
-                }
-            }
-        }
-
-        #[cfg(target_os = "linux")]
-        if is_linux_wayland {
-            let displays = scrap::wayland::display::get_displays();
-            if let Some(display) = displays.displays.get(displays.primary) {
-                let logical_size = display
-                    .logical_size
-                    .unwrap_or((display.width, display.height));
-                display_info = serde_json::to_string(&HashMap::from([
-                    ("w", logical_size.0),
-                    ("h", logical_size.1),
-                ]))
-                .unwrap_or_default();
-            }
+    if let Ok(displays) = crate::display_service::try_get_displays() {
+        // to-do: Need to detect current display index.
+        if let Some(display) = displays.iter().next() {
+            display_info = serde_json::to_string(&HashMap::from([
+                ("w", display.width()),
+                ("h", display.height()),
+            ]))
+            .unwrap_or_default();
         }
     }
     SyncReturn(display_info)
@@ -1573,11 +1420,7 @@ pub fn main_get_main_display() -> SyncReturn<String> {
 // No need to check if is on Wayland in this function.
 // The Flutter side gets display information on Wayland using a different method.
 pub fn main_get_displays() -> SyncReturn<String> {
-    #[cfg(target_os = "ios")]
-    let display_info = "".to_owned();
-    #[cfg(not(target_os = "ios"))]
     let mut display_info = "".to_owned();
-    #[cfg(not(target_os = "ios"))]
     if let Ok(displays) = crate::display_service::try_get_displays() {
         let displays = displays
             .iter()
@@ -1647,7 +1490,7 @@ pub fn cm_close_voice_call(id: i32) {
 }
 
 pub fn set_voice_call_input_device(_is_cm: bool, _device: String) {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     if _is_cm {
         let _ = crate::ipc::set_config("voice-call-input", _device);
     } else {
@@ -1656,7 +1499,7 @@ pub fn set_voice_call_input_device(_is_cm: bool, _device: String) {
 }
 
 pub fn get_voice_call_input_device(_is_cm: bool) -> String {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     if _is_cm {
         match crate::ipc::get_config("voice-call-input") {
             Ok(Some(device)) => device,
@@ -1665,8 +1508,6 @@ pub fn get_voice_call_input_device(_is_cm: bool) -> String {
     } else {
         crate::audio_service::get_voice_call_input_device().unwrap_or_default()
     }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    "".to_owned()
 }
 
 pub fn main_get_last_remote_id() -> String {
@@ -1749,23 +1590,10 @@ pub fn main_is_root() -> bool {
 }
 
 pub fn get_double_click_time() -> SyncReturn<i32> {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        return SyncReturn(crate::platform::get_double_click_time() as _);
-    }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    SyncReturn(500i32)
+    SyncReturn(crate::platform::get_double_click_time() as _)
 }
 
 pub fn main_start_dbus_server() {
-    #[cfg(target_os = "linux")]
-    {
-        use crate::dbus::start_dbus_server;
-        // spawn new thread to start dbus server
-        std::thread::spawn(|| {
-            let _ = start_dbus_server();
-        });
-    }
 }
 
 pub fn main_save_ab(json: String) {
@@ -1849,7 +1677,7 @@ pub fn session_send_mouse(session_id: SessionID, msg: String) {
             // The server does not track mode deactivation; it simply stops receiving
             // relative move events when the client exits relative mouse mode.
             if !active {
-                #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            
                 crate::keyboard::set_relative_mouse_mode_state(false);
                 return;
             }
@@ -1897,7 +1725,7 @@ pub fn session_send_mouse(session_id: SessionID, msg: String) {
             }
 
             // All validation passed - marker will be forwarded as a no-op relative move.
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        
             crate::keyboard::set_relative_mouse_mode_state(true);
         }
 
@@ -2011,13 +1839,6 @@ pub fn session_on_waiting_for_image_dialog_show(session_id: SessionID) {
     super::flutter::session_on_waiting_for_image_dialog_show(session_id);
 }
 
-pub fn session_toggle_virtual_display(session_id: SessionID, index: i32, on: bool) {
-    if let Some(session) = sessions::get_session_by_session_id(&session_id) {
-        session.toggle_virtual_display(index, on);
-        flutter::session_update_virtual_display(&session, index, on);
-    }
-}
-
 pub fn session_printer_response(
     session_id: SessionID,
     id: i32,
@@ -2030,10 +1851,6 @@ pub fn session_printer_response(
 }
 
 pub fn main_set_home_dir(_home: String) {
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        *config::APP_HOME_DIR.write().unwrap() = _home;
-    }
 }
 
 // This is a temporary method to get data dir for ios
@@ -2049,19 +1866,9 @@ pub fn main_get_data_dir_ios(app_dir: String) -> SyncReturn<String> {
 }
 
 pub fn main_stop_service() {
-    #[cfg(target_os = "android")]
-    {
-        config::Config::set_option("stop-service".into(), "Y".into());
-        crate::rendezvous_mediator::RendezvousMediator::restart();
-    }
 }
 
 pub fn main_start_service() {
-    #[cfg(target_os = "android")]
-    {
-        config::Config::set_option("stop-service".into(), "".into());
-        crate::rendezvous_mediator::RendezvousMediator::restart();
-    }
 }
 
 pub fn main_update_temporary_password() {
@@ -2089,34 +1896,22 @@ pub fn main_check_mouse_time() {
 }
 
 pub fn main_get_mouse_time() -> f64 {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        get_mouse_time()
-    }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        0.0
-    }
+
+    get_mouse_time()
 }
 
 pub fn main_wol(id: String) {
-    // TODO: move send_wol outside.
-    #[cfg(not(any(target_os = "ios")))]
     crate::lan::send_wol(id)
 }
 
 pub fn main_create_shortcut(_id: String) {
-    #[cfg(windows)]
-    create_shortcut(_id);
 }
 
 pub fn cm_send_chat(conn_id: i32, msg: String) {
-    #[cfg(not(any(target_os = "ios")))]
     crate::ui_cm_interface::send_chat(conn_id, msg);
 }
 
 pub fn cm_login_res(conn_id: i32, res: bool) {
-    #[cfg(not(any(target_os = "ios")))]
     if res {
         crate::ui_cm_interface::authorize(conn_id);
     } else {
@@ -2125,29 +1920,25 @@ pub fn cm_login_res(conn_id: i32, res: bool) {
 }
 
 pub fn cm_close_connection(conn_id: i32) {
-    #[cfg(not(any(target_os = "ios")))]
     crate::ui_cm_interface::close(conn_id);
 }
 
 pub fn cm_remove_disconnected_connection(conn_id: i32) {
-    #[cfg(not(any(target_os = "ios")))]
     crate::ui_cm_interface::remove(conn_id);
 }
 
 pub fn cm_check_click_time(conn_id: i32) {
-    #[cfg(not(any(target_os = "ios")))]
+
     crate::ui_cm_interface::check_click_time(conn_id)
 }
 
 pub fn cm_get_click_time() -> f64 {
-    #[cfg(not(any(target_os = "ios")))]
+
     return crate::ui_cm_interface::get_click_time() as _;
-    #[cfg(any(target_os = "ios"))]
-    return 0 as _;
 }
 
 pub fn cm_switch_permission(conn_id: i32, name: String, enabled: bool) {
-    #[cfg(not(any(target_os = "ios")))]
+
     crate::ui_cm_interface::switch_permission(conn_id, name, enabled)
 }
 
@@ -2156,26 +1947,19 @@ pub fn cm_can_elevate() -> SyncReturn<bool> {
 }
 
 pub fn cm_elevate_portable(conn_id: i32) {
-    #[cfg(not(any(target_os = "ios")))]
+
     crate::ui_cm_interface::elevate_portable(conn_id);
 }
 
 pub fn cm_switch_back(conn_id: i32) {
-    #[cfg(not(any(target_os = "ios")))]
+
     crate::ui_cm_interface::switch_back(conn_id);
 }
 
 pub fn cm_get_config(name: String) -> String {
-    #[cfg(not(target_os = "ios"))]
-    {
-        if let Ok(Some(v)) = crate::ipc::get_config(&name) {
-            v
-        } else {
-            "".to_string()
-        }
-    }
-    #[cfg(target_os = "ios")]
-    {
+    if let Ok(Some(v)) = crate::ipc::get_config(&name) {
+        v
+    } else {
         "".to_string()
     }
 }
@@ -2233,7 +2017,7 @@ pub fn main_is_installed() -> SyncReturn<bool> {
 }
 
 pub fn main_init_input_source() -> SyncReturn<()> {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     crate::keyboard::input_source::init_input_source();
     SyncReturn(())
 }
@@ -2288,8 +2072,6 @@ pub fn set_cur_session_id(session_id: SessionID) {
 
 fn set_cur_session_id_(session_id: SessionID, _keyboard_mode: &str) {
     super::flutter::set_cur_session_id(session_id);
-    #[cfg(windows)]
-    crate::keyboard::update_grab_get_key_name(_keyboard_mode);
 }
 
 pub fn install_show_run_without_install() -> SyncReturn<bool> {
@@ -2327,9 +2109,7 @@ pub fn main_account_auth_result() -> String {
 }
 
 pub fn main_on_main_window_close() {
-    // may called more than one times
-    #[cfg(windows)]
-    crate::portable_service::client::drop_portable_service_shared_memory();
+    // may be called more than once
 }
 
 pub fn main_current_is_wayland() -> SyncReturn<bool> {
@@ -2341,13 +2121,12 @@ pub fn main_is_login_wayland() -> SyncReturn<bool> {
 }
 
 pub fn main_hide_dock() -> SyncReturn<bool> {
-    #[cfg(target_os = "macos")]
     crate::platform::macos::hide_dock();
     SyncReturn(true)
 }
 
 pub fn main_has_file_clipboard() -> SyncReturn<bool> {
-    let ret = cfg!(any(target_os = "windows", feature = "unix-file-copy-paste",));
+    let ret = cfg!(feature = "unix-file-copy-paste");
     SyncReturn(ret)
 }
 
@@ -2356,7 +2135,7 @@ pub fn main_has_gpu_texture_render() -> SyncReturn<bool> {
 }
 
 pub fn cm_init() {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     crate::flutter::connection_manager::cm_init();
 }
 
@@ -2365,20 +2144,10 @@ pub fn cm_init() {
 /// * Should only be called in the main flutter window.
 /// * macOS only
 pub fn main_start_ipc_url_server() {
-    #[cfg(target_os = "macos")]
     std::thread::spawn(move || crate::server::start_ipc_url_server());
 }
 
 pub fn main_test_wallpaper(_second: u64) {
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    std::thread::spawn(move || match crate::platform::WallPaperRemover::new() {
-        Ok(_remover) => {
-            std::thread::sleep(std::time::Duration::from_secs(_second));
-        }
-        Err(e) => {
-            log::info!("create wallpaper remover failed: {:?}", e);
-        }
-    });
 }
 
 pub fn main_support_remove_wallpaper() -> bool {
@@ -2424,10 +2193,7 @@ pub fn is_preset_password() -> bool {
         .unwrap()
         .get("password")
         .map_or(false, |p| {
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             return p == &crate::ipc::get_permanent_password();
-            #[cfg(any(target_os = "android", target_os = "ios"))]
-            return p == &config::Config::get_permanent_password();
         })
 }
 
@@ -2440,16 +2206,14 @@ pub fn is_preset_password_mobile_only() -> SyncReturn<bool> {
 /// Send a url scheme through the ipc.
 ///
 /// * macOS only
-#[allow(unused_variables)]
-pub fn send_url_scheme(_url: String) {
-    #[cfg(target_os = "macos")]
-    std::thread::spawn(move || crate::handle_url_scheme(_url));
+pub fn send_url_scheme(url: String) {
+    std::thread::spawn(move || crate::handle_url_scheme(url));
 }
 
 #[inline]
 pub fn plugin_event(_id: String, _peer: String, _event: Vec<u8>) {
     #[cfg(feature = "plugin_framework")]
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     {
         allow_err!(crate::plugin::handle_ui_event(&_id, &_peer, &_event));
     }
@@ -2469,7 +2233,7 @@ pub fn plugin_get_session_option(
     _key: String,
 ) -> SyncReturn<Option<String>> {
     #[cfg(feature = "plugin_framework")]
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     {
         SyncReturn(crate::plugin::PeerConfig::get(&_id, &_peer, &_key))
     }
@@ -2486,7 +2250,7 @@ pub fn plugin_get_session_option(
 #[inline]
 pub fn plugin_set_session_option(_id: String, _peer: String, _key: String, _value: String) {
     #[cfg(feature = "plugin_framework")]
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     {
         let _res = crate::plugin::PeerConfig::set(&_id, &_peer, &_key, &_value);
     }
@@ -2495,7 +2259,7 @@ pub fn plugin_set_session_option(_id: String, _peer: String, _key: String, _valu
 #[inline]
 pub fn plugin_get_shared_option(_id: String, _key: String) -> SyncReturn<Option<String>> {
     #[cfg(feature = "plugin_framework")]
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     {
         SyncReturn(crate::plugin::ipc::get_config(&_id, &_key).unwrap_or(None))
     }
@@ -2512,7 +2276,7 @@ pub fn plugin_get_shared_option(_id: String, _key: String) -> SyncReturn<Option<
 #[inline]
 pub fn plugin_set_shared_option(_id: String, _key: String, _value: String) {
     #[cfg(feature = "plugin_framework")]
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     {
         allow_err!(crate::plugin::ipc::set_config(&_id, &_key, _value));
     }
@@ -2521,7 +2285,7 @@ pub fn plugin_set_shared_option(_id: String, _key: String, _value: String) {
 #[inline]
 pub fn plugin_reload(_id: String) {
     #[cfg(feature = "plugin_framework")]
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     {
         allow_err!(crate::plugin::ipc::reload_plugin(&_id,));
         allow_err!(crate::plugin::reload_plugin(&_id));
@@ -2531,7 +2295,7 @@ pub fn plugin_reload(_id: String) {
 #[inline]
 pub fn plugin_enable(_id: String, _v: bool) -> SyncReturn<()> {
     #[cfg(feature = "plugin_framework")]
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     {
         allow_err!(crate::plugin::ipc::set_manager_plugin_config(
             &_id,
@@ -2549,7 +2313,7 @@ pub fn plugin_enable(_id: String, _v: bool) -> SyncReturn<()> {
 
 pub fn plugin_is_enabled(_id: String) -> SyncReturn<bool> {
     #[cfg(feature = "plugin_framework")]
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     {
         SyncReturn(
             match crate::plugin::ipc::get_manager_plugin_config(&_id, "enabled") {
@@ -2570,7 +2334,7 @@ pub fn plugin_is_enabled(_id: String) -> SyncReturn<bool> {
 
 pub fn plugin_feature_is_enabled() -> SyncReturn<bool> {
     #[cfg(feature = "plugin_framework")]
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     {
         #[cfg(debug_assertions)]
         let enabled = true;
@@ -2590,7 +2354,7 @@ pub fn plugin_feature_is_enabled() -> SyncReturn<bool> {
 
 pub fn plugin_sync_ui(_sync_to: String) {
     #[cfg(feature = "plugin_framework")]
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     {
         if plugin_feature_is_enabled().0 {
             crate::plugin::sync_ui(_sync_to);
@@ -2600,7 +2364,7 @@ pub fn plugin_sync_ui(_sync_to: String) {
 
 pub fn plugin_list_reload() {
     #[cfg(feature = "plugin_framework")]
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     {
         crate::plugin::load_plugin_list();
     }
@@ -2608,7 +2372,7 @@ pub fn plugin_list_reload() {
 
 pub fn plugin_install(_id: String, _b: bool) {
     #[cfg(feature = "plugin_framework")]
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
     {
         if _b {
             if let Err(e) = crate::plugin::install_plugin(&_id) {
@@ -2625,14 +2389,7 @@ pub fn is_support_multi_ui_session(version: String) -> SyncReturn<bool> {
 }
 
 pub fn is_selinux_enforcing() -> SyncReturn<bool> {
-    #[cfg(target_os = "linux")]
-    {
-        SyncReturn(crate::platform::linux::is_selinux_enforcing())
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        SyncReturn(false)
-    }
+    SyncReturn(false)
 }
 
 pub fn main_default_privacy_mode_impl() -> SyncReturn<String> {
@@ -2647,17 +2404,10 @@ pub fn main_supported_privacy_mode_impls() -> SyncReturn<String> {
 }
 
 pub fn main_supported_input_source() -> SyncReturn<String> {
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        SyncReturn("".to_owned())
-    }
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        SyncReturn(
-            serde_json::to_string(&crate::keyboard::input_source::get_supported_input_source())
-                .unwrap_or_default(),
-        )
-    }
+    SyncReturn(
+        serde_json::to_string(&crate::keyboard::input_source::get_supported_input_source())
+            .unwrap_or_default(),
+    )
 }
 
 pub fn main_generate2fa() -> String {
@@ -2715,40 +2465,21 @@ pub fn session_request_new_display_init_msgs(session_id: SessionID, display: usi
 }
 
 pub fn main_audio_support_loopback() -> SyncReturn<bool> {
-    #[cfg(target_os = "windows")]
-    let is_surpport = true;
     #[cfg(feature = "screencapturekit")]
     let is_surpport = crate::audio_service::is_screen_capture_kit_available();
-    #[cfg(not(any(target_os = "windows", feature = "screencapturekit")))]
+    #[cfg(not(feature = "screencapturekit"))]
     let is_surpport = false;
     SyncReturn(is_surpport)
 }
 
 pub fn main_get_printer_names() -> SyncReturn<String> {
-    #[cfg(target_os = "windows")]
-    return SyncReturn(
-        serde_json::to_string(&crate::platform::windows::get_printer_names().unwrap_or_default())
-            .unwrap_or_default(),
-    );
-    #[cfg(not(target_os = "windows"))]
-    return SyncReturn("".to_owned());
+    SyncReturn("".to_owned())
 }
 
 pub fn main_get_common(key: String) -> String {
     if key == "is-printer-installed" {
-        #[cfg(target_os = "windows")]
-        {
-            return match remote_printer::is_rd_printer_installed(&get_app_name()) {
-                Ok(r) => r.to_string(),
-                Err(e) => e.to_string(),
-            };
-        }
-        #[cfg(not(target_os = "windows"))]
         return false.to_string();
     } else if key == "is-support-printer-driver" {
-        #[cfg(target_os = "windows")]
-        return crate::platform::is_win_10_or_greater().to_string();
-        #[cfg(not(target_os = "windows"))]
         return false.to_string();
     } else if key == "transfer-job-id" {
         return hbb_common::fs::get_next_job_id().to_string();
@@ -2760,9 +2491,6 @@ pub fn main_get_common(key: String) -> String {
         }
         .to_string();
     } else if key == "has-gnome-shortcuts-inhibitor-permission" {
-        #[cfg(target_os = "linux")]
-        return crate::platform::linux::has_gnome_shortcuts_inhibitor_permission().to_string();
-        #[cfg(not(target_os = "linux"))]
         return false.to_string();
     } else {
         if key.starts_with("download-data-") {
@@ -2775,29 +2503,13 @@ pub fn main_get_common(key: String) -> String {
             }
         } else if key.starts_with("download-file-") {
             let _version = key.replace("download-file-", "");
-            #[cfg(target_os = "windows")]
-            return match crate::platform::windows::is_msi_installed() {
-                Ok(true) => format!("rustdesk-{_version}-x86_64.msi"),
-                Ok(false) => format!("rustdesk-{_version}-x86_64.exe"),
-                Err(e) => {
-                    log::error!("Failed to check if is msi: {}", e);
-                    format!("error:update-failed-check-msi-tip")
-                }
-            };
-            #[cfg(target_os = "macos")]
-            {
-                return if cfg!(target_arch = "x86_64") {
-                    format!("rustdesk-{_version}-x86_64.dmg")
-                } else if cfg!(target_arch = "aarch64") {
-                    format!("rustdesk-{_version}-aarch64.dmg")
-                } else {
-                    "error:unsupported".to_owned()
-                };
-            }
-            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-            {
+            return if cfg!(target_arch = "x86_64") {
+                format!("rustdesk-{_version}-x86_64.dmg")
+            } else if cfg!(target_arch = "aarch64") {
+                format!("rustdesk-{_version}-aarch64.dmg")
+            } else {
                 "error:unsupported".to_owned()
-            }
+            };
         } else {
             "".to_owned()
         }
@@ -2809,39 +2521,6 @@ pub fn main_get_common_sync(key: String) -> SyncReturn<String> {
 }
 
 pub fn main_set_common(_key: String, _value: String) {
-    #[cfg(target_os = "windows")]
-    if _key == "install-printer" && crate::platform::is_win_10_or_greater() {
-        std::thread::spawn(move || {
-            let (success, msg) = match remote_printer::install_update_printer(&get_app_name()) {
-                Ok(_) => (true, "".to_owned()),
-                Err(e) => {
-                    let err = e.to_string();
-                    log::error!("Failed to install/update rd printer: {}", &err);
-                    (false, err)
-                }
-            };
-            if success {
-                // Use `ipc` to notify the server process to update the install option in the registry.
-                // Because `install_update_printer()` may prompt for permissions, there is no need to prompt again here.
-                if let Err(e) = crate::ipc::set_install_option(
-                    crate::platform::REG_NAME_INSTALL_PRINTER.to_string(),
-                    "1".to_string(),
-                ) {
-                    log::error!("Failed to set install printer option: {}", e);
-                }
-            }
-            let data = HashMap::from([
-                ("name", serde_json::json!("install-printer-res")),
-                ("success", serde_json::json!(success)),
-                ("msg", serde_json::json!(msg)),
-            ]);
-            let _res = flutter::push_global_event(
-                flutter::APP_TYPE_MAIN,
-                serde_json::ser::to_string(&data).unwrap_or("".to_owned()),
-            );
-        });
-    }
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
     {
         use crate::updater::get_download_file_from_url;
         if _key == "download-new-version" {
@@ -2874,23 +2553,6 @@ pub fn main_set_common(_key: String, _value: String) {
                     new_version_file.to_str()
                 );
                 if let Some(f) = new_version_file.to_str() {
-                    // 1.4.0 does not support "--update"
-                    // But we can assume that the new version supports it.
-                    #[cfg(target_os = "windows")]
-                    if f.ends_with(".exe") {
-                        if let Err(e) =
-                            crate::platform::run_exe_in_cur_session(f, vec!["--update"], false)
-                        {
-                            log::error!("Failed to run the update exe: {}", e);
-                        }
-                    } else if f.ends_with(".msi") {
-                        if let Err(e) = crate::platform::update_me_msi(f, false) {
-                            log::error!("Failed to run the update msi: {}", e);
-                        }
-                    } else {
-                        // unreachable!()
-                    }
-                    #[cfg(target_os = "macos")]
                     match crate::platform::update_to(f) {
                         Ok(_) => {
                             log::info!("Update successfully!");
@@ -2903,7 +2565,6 @@ pub fn main_set_common(_key: String, _value: String) {
                 }
             }
         } else if _key == "extract-update-dmg" {
-            #[cfg(target_os = "macos")]
             {
                 if let Some(new_version_file) = get_download_file_from_url(&_value) {
                     if let Some(f) = new_version_file.to_str() {
@@ -2926,28 +2587,6 @@ pub fn main_set_common(_key: String, _value: String) {
         crate::hbbs_http::downloader::cancel(&_value);
     }
 
-    #[cfg(target_os = "linux")]
-    if _key == "clear-gnome-shortcuts-inhibitor-permission" {
-        std::thread::spawn(move || {
-            let (success, msg) =
-                match crate::platform::linux::clear_gnome_shortcuts_inhibitor_permission() {
-                    Ok(_) => (true, "".to_owned()),
-                    Err(e) => (false, e.to_string()),
-                };
-            let data = HashMap::from([
-                (
-                    "name",
-                    serde_json::json!("clear-gnome-shortcuts-inhibitor-permission-res"),
-                ),
-                ("success", serde_json::json!(success)),
-                ("msg", serde_json::json!(msg)),
-            ]);
-            let _res = flutter::push_global_event(
-                flutter::APP_TYPE_MAIN,
-                serde_json::ser::to_string(&data).unwrap_or("".to_owned()),
-            );
-        });
-    }
 }
 
 pub fn session_get_common_sync(
@@ -2975,91 +2614,3 @@ pub fn session_get_common(
     }
 }
 
-#[cfg(target_os = "android")]
-pub mod server_side {
-    use hbb_common::{config, log};
-    use jni::{
-        errors::{Error as JniError, Result as JniResult},
-        objects::{JClass, JObject, JString},
-        sys::{jboolean, jstring},
-        JNIEnv,
-    };
-
-    use crate::start_server;
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_ffi_FFI_startServer(
-        env: JNIEnv,
-        _class: JClass,
-        app_dir: JString,
-        custom_client_config: JString,
-    ) {
-        log::debug!("startServer from jvm");
-        let mut env = env;
-        if let Ok(app_dir) = env.get_string(&app_dir) {
-            *config::APP_DIR.write().unwrap() = app_dir.into();
-        }
-        if let Ok(custom_client_config) = env.get_string(&custom_client_config) {
-            if !custom_client_config.is_empty() {
-                let custom_client_config: String = custom_client_config.into();
-                crate::read_custom_client(&custom_client_config);
-            }
-        }
-        std::thread::spawn(move || start_server(true));
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_ffi_FFI_startService(_env: JNIEnv, _class: JClass) {
-        log::debug!("startService from jvm");
-        config::Config::set_option("stop-service".into(), "".into());
-        crate::rendezvous_mediator::RendezvousMediator::restart();
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_ffi_FFI_translateLocale(
-        env: JNIEnv,
-        _class: JClass,
-        locale: JString,
-        input: JString,
-    ) -> jstring {
-        let mut env = env;
-        let res = if let (Ok(input), Ok(locale)) = (env.get_string(&input), env.get_string(&locale))
-        {
-            let input: String = input.into();
-            let locale: String = locale.into();
-            crate::client::translate_locale(input, &locale)
-        } else {
-            "".into()
-        };
-        return env.new_string(res).unwrap_or(input).into_raw();
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_ffi_FFI_refreshScreen(_env: JNIEnv, _class: JClass) {
-        crate::server::video_service::refresh()
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_ffi_FFI_getLocalOption(
-        env: JNIEnv,
-        _class: JClass,
-        key: JString,
-    ) -> jstring {
-        let mut env = env;
-        let res = if let Ok(key) = env.get_string(&key) {
-            let key: String = key.into();
-            super::get_local_option(key)
-        } else {
-            "".into()
-        };
-        return env.new_string(res).unwrap_or_default().into_raw();
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_ffi_FFI_isServiceClipboardEnabled(
-        env: JNIEnv,
-        _class: JClass,
-    ) -> jboolean {
-        jboolean::from(crate::server::is_clipboard_service_ok())
-    }
-}

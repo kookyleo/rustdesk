@@ -8,7 +8,6 @@ use std::{
 use bytes::Bytes;
 
 pub use connection::*;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use hbb_common::config::Config2;
 use hbb_common::tcp::{self, new_listener};
 use hbb_common::{
@@ -25,7 +24,6 @@ use hbb_common::{
     timeout, tokio, ResultType, Stream,
 };
 use scrap::camera;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use service::ServiceTmpl;
 use service::{EmptyExtraFieldService, GenericService, Service, Subscriber};
 use video_service::VideoSource;
@@ -33,54 +31,19 @@ use video_service::VideoSource;
 use crate::ipc::Data;
 
 pub mod audio_service;
-#[cfg(target_os = "windows")]
-pub mod terminal_helper;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod terminal_service;
-cfg_if::cfg_if! {
-if #[cfg(not(target_os = "ios"))] {
 mod clipboard_service;
-#[cfg(target_os = "android")]
-pub use clipboard_service::is_clipboard_service_ok;
-#[cfg(target_os = "linux")]
-pub(crate) mod wayland;
-#[cfg(target_os = "linux")]
-pub mod uinput;
-#[cfg(target_os = "linux")]
-pub mod rdp_input;
-#[cfg(target_os = "linux")]
-pub mod dbus;
-#[cfg(not(target_os = "android"))]
 pub mod input_service;
-} else {
-mod clipboard_service {
-pub const NAME: &'static str = "";
-}
-}
-}
-
-#[cfg(any(target_os = "android", target_os = "ios"))]
-pub mod input_service {
-    pub const NAME_CURSOR: &'static str = "";
-    pub const NAME_POS: &'static str = "";
-    pub const NAME_WINDOW_FOCUS: &'static str = "";
-}
 
 mod connection;
 pub mod display_service;
-#[cfg(windows)]
-pub mod portable_service;
 mod service;
 mod video_qos;
 pub mod video_service;
 
-#[cfg(all(target_os = "windows", feature = "flutter"))]
-pub mod printer_service;
-
 pub type Childs = Arc<Mutex<Vec<std::process::Child>>>;
 type ConnMap = HashMap<i32, ConnInner>;
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
 const CONFIG_SYNC_INTERVAL_SECS: f32 = 0.3;
 
 lazy_static::lazy_static! {
@@ -111,44 +74,18 @@ pub fn new() -> ServerPtr {
         id_count: hbb_common::rand::random::<i32>() % 1000 + 1000, // ensure positive
     };
     server.add_service(Box::new(audio_service::new()));
-    #[cfg(not(target_os = "ios"))]
-    {
-        server.add_service(Box::new(display_service::new()));
-        server.add_service(Box::new(clipboard_service::new(
-            clipboard_service::NAME.to_owned(),
-        )));
-        #[cfg(feature = "unix-file-copy-paste")]
-        server.add_service(Box::new(clipboard_service::new(
-            clipboard_service::FILE_NAME.to_owned(),
-        )));
-    }
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        if !display_service::capture_cursor_embedded() {
-            server.add_service(Box::new(input_service::new_cursor()));
-            server.add_service(Box::new(input_service::new_pos()));
-            #[cfg(target_os = "linux")]
-            if scrap::is_x11() {
-                // wayland does not support multiple displays currently
-                server.add_service(Box::new(input_service::new_window_focus()));
-            }
-            #[cfg(not(target_os = "linux"))]
-            server.add_service(Box::new(input_service::new_window_focus()));
-        }
-    }
-    #[cfg(all(target_os = "windows", feature = "flutter"))]
-    {
-        match printer_service::init(&crate::get_app_name()) {
-            Ok(()) => {
-                log::info!("printer service initialized");
-                server.add_service(Box::new(printer_service::new(
-                    printer_service::NAME.to_owned(),
-                )));
-            }
-            Err(e) => {
-                log::error!("printer service init failed: {}", e);
-            }
-        }
+    server.add_service(Box::new(display_service::new()));
+    server.add_service(Box::new(clipboard_service::new(
+        clipboard_service::NAME.to_owned(),
+    )));
+    #[cfg(feature = "unix-file-copy-paste")]
+    server.add_service(Box::new(clipboard_service::new(
+        clipboard_service::FILE_NAME.to_owned(),
+    )));
+    if !display_service::capture_cursor_embedded() {
+        server.add_service(Box::new(input_service::new_cursor()));
+        server.add_service(Box::new(input_service::new_pos()));
+        server.add_service(Box::new(input_service::new_window_focus()));
     }
     // Terminal service is created per connection, not globally
     Arc::new(RwLock::new(server))
@@ -243,18 +180,15 @@ pub async fn create_tcp_connection(
         }
     }
 
-    #[cfg(target_os = "macos")]
+    use std::process::Command;
+    if let Ok(task) = Command::new("/usr/bin/caffeinate")
+        .arg("-u")
+        .arg("-t 5")
+        .spawn()
     {
-        use std::process::Command;
-        if let Ok(task) = Command::new("/usr/bin/caffeinate")
-            .arg("-u")
-            .arg("-t 5")
-            .spawn()
-        {
-            super::CHILD_PROCESS.lock().unwrap().push(task);
-        }
-        log::info!("wake up macos");
+        super::CHILD_PROCESS.lock().unwrap().push(task);
     }
+    log::info!("wake up macos");
     Connection::start(
         addr,
         stream,
@@ -391,7 +325,6 @@ impl Server {
                 s.on_subscribe(conn.clone());
             }
         }
-        #[cfg(target_os = "macos")]
         self.update_enable_retina();
         self.connections.insert(conn.id(), conn);
     }
@@ -401,7 +334,6 @@ impl Server {
             s.on_unsubscribe(conn.id());
         }
         self.connections.remove(&conn.id());
-        #[cfg(target_os = "macos")]
         self.update_enable_retina();
     }
 
@@ -435,7 +367,6 @@ impl Server {
             } else {
                 s.on_unsubscribe(conn.id());
             }
-            #[cfg(target_os = "macos")]
             self.update_enable_retina();
         }
     }
@@ -507,7 +438,6 @@ impl Server {
         }
     }
 
-    #[cfg(target_os = "macos")]
     fn update_enable_retina(&self) {
         let mut video_service_count = 0;
         for (name, service) in self.services.iter() {
@@ -524,8 +454,6 @@ impl Drop for Server {
         for s in self.services.values() {
             s.join();
         }
-        #[cfg(target_os = "linux")]
-        wayland::clear();
     }
 }
 
@@ -553,12 +481,6 @@ pub fn check_zombie() {
 /// * `is_server` - Whether the current client is definitely the server.
 /// If true, the server will be started.
 /// Otherwise, client will check if there's already a server and start one if not.
-#[cfg(any(target_os = "android", target_os = "ios"))]
-#[tokio::main]
-pub async fn start_server(_is_server: bool) {
-    crate::RendezvousMediator::start_all().await;
-}
-
 /// Start the host server that allows the remote peer to control the current machine.
 ///
 /// # Arguments
@@ -567,19 +489,11 @@ pub async fn start_server(_is_server: bool) {
 /// If true, the server will be started.
 /// Otherwise, client will check if there's already a server and start one if not.
 /// * `no_server` - If `is_server` is false, whether to start a server if not found.
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tokio::main]
 pub async fn start_server(is_server: bool, no_server: bool) {
     use std::sync::Once;
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        #[cfg(target_os = "linux")]
-        {
-            log::info!("DISPLAY={:?}", std::env::var("DISPLAY"));
-            log::info!("XAUTHORITY={:?}", std::env::var("XAUTHORITY"));
-        }
-        #[cfg(windows)]
-        hbb_common::platform::windows::start_cpu_performance_monitor();
     });
 
     if is_server {
@@ -595,14 +509,7 @@ pub async fn start_server(is_server: bool, no_server: bool) {
             }
         });
         input_service::fix_key_down_timeout_loop();
-        #[cfg(target_os = "linux")]
-        if input_service::wayland_use_uinput() {
-            allow_err!(input_service::setup_uinput(0, 1920, 0, 1080).await);
-        }
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
         tokio::spawn(async { sync_and_watch_config_dir().await });
-        #[cfg(target_os = "windows")]
-        crate::platform::try_kill_broker();
         #[cfg(feature = "hwcodec")]
         scrap::hwcodec::start_check_process();
         crate::RendezvousMediator::start_all().await;
@@ -626,7 +533,6 @@ pub async fn start_server(is_server: bool, no_server: bool) {
                     }
                 }
                 #[cfg(feature = "hwcodec")]
-                #[cfg(any(target_os = "windows", target_os = "linux"))]
                 crate::ipc::client_get_hwcodec_config_thread(0);
             }
             Err(err) => {
@@ -643,7 +549,6 @@ pub async fn start_server(is_server: bool, no_server: bool) {
     }
 }
 
-#[cfg(target_os = "macos")]
 #[tokio::main(flavor = "current_thread")]
 pub async fn start_ipc_url_server() {
     log::debug!("Start an ipc server for listening to url schemes");
@@ -684,7 +589,6 @@ pub async fn start_ipc_url_server() {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
 async fn sync_and_watch_config_dir() {
     if crate::platform::is_root() {
         return;
@@ -764,12 +668,5 @@ pub async fn stop_main_window_process() {
     // but --server usually can be auto restarted by --service, so it is ok
     if let Ok(mut conn) = crate::ipc::connect(1000, "").await {
         conn.send(&crate::ipc::Data::Close).await.ok();
-    }
-    #[cfg(windows)]
-    {
-        // in case above failure, e.g. zombie process
-        if let Err(e) = crate::platform::try_kill_rustdesk_main_window_process() {
-            log::error!("kill failed: {}", e);
-        }
     }
 }

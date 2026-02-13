@@ -260,11 +260,6 @@ pub struct MsgListenEvent {
     pub event: String,
 }
 
-#[cfg(target_os = "windows")]
-const DYLIB_SUFFIX: &str = ".dll";
-#[cfg(target_os = "linux")]
-const DYLIB_SUFFIX: &str = ".so";
-#[cfg(target_os = "macos")]
 const DYLIB_SUFFIX: &str = ".dylib";
 
 pub(super) fn load_plugins(uninstalled_ids: &HashSet<String>) -> ResultType<()> {

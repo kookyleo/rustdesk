@@ -12,13 +12,10 @@ use std::{
     collections::HashMap,
     sync::atomic::{AtomicBool, Ordering},
 };
-#[cfg(not(windows))]
 use std::{fs::File, io::prelude::*};
 
 #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::plugin::ipc::Plugin;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub use clipboard::ClipboardFile;
 use hbb_common::{
     allow_err, bail, bytes,
@@ -145,22 +142,6 @@ pub enum FS {
     },
 }
 
-#[cfg(target_os = "windows")]
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(tag = "t")]
-pub struct ClipboardNonFile {
-    pub compress: bool,
-    pub content: bytes::Bytes,
-    pub content_len: usize,
-    pub next_raw: bool,
-    pub width: i32,
-    pub height: i32,
-    // message.proto: ClipboardFormat
-    pub format: i32,
-    pub special_name: String,
-}
-
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "t", content = "c")]
 pub enum DataKeyboard {
@@ -177,7 +158,6 @@ pub enum DataKeyboardResponse {
     GetKeyState(bool),
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "t", content = "c")]
 pub enum DataMouse {
@@ -247,12 +227,9 @@ pub enum Data {
     },
     SystemInfo(Option<String>),
     ClickTime(i64),
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     MouseMoveTime(i64),
     Authorize,
     Close,
-    #[cfg(windows)]
-    SAS,
     UserSid(Option<u32>),
     OnlineStatus(Option<(i64, bool)>),
     Config((String, Option<String>)),
@@ -264,18 +241,11 @@ pub enum Data {
     FS(FS),
     Test,
     SyncConfig(Option<Box<(Config, Config2)>>),
-    #[cfg(target_os = "windows")]
-    ClipboardFile(ClipboardFile),
     ClipboardFileEnabled(bool),
-    #[cfg(target_os = "windows")]
-    ClipboardNonFile(Option<(String, Vec<ClipboardNonFile>)>),
     PrivacyModeState((i32, PrivacyModeState, String)),
     TestRendezvousServer,
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     Keyboard(DataKeyboard),
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     KeyboardResponse(DataKeyboardResponse),
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     Mouse(DataMouse),
     Control(DataControl),
     Theme(String),
@@ -291,13 +261,8 @@ pub enum Data {
     VoiceCallResponse(bool),
     CloseVoiceCall(String),
     #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     Plugin(Plugin),
-    #[cfg(windows)]
-    SyncWinCpuUsage(Option<f64>),
     FileTransferLog((String, String)),
-    #[cfg(windows)]
-    ControlledSessionCount(usize),
     CmErr(String),
     // CM-side file reading responses (Windows only)
     // These are sent from CM back to Connection when CM handles file reading
@@ -373,24 +338,12 @@ pub enum Data {
     HwCodecConfig(Option<String>),
     RemoveTrustedDevices(Vec<Bytes>),
     ClearTrustedDevices,
-    #[cfg(all(target_os = "windows", feature = "flutter"))]
-    PrinterData(Vec<u8>),
     InstallOption(Option<(String, String)>),
-    #[cfg(all(
-        feature = "flutter",
-        not(any(target_os = "android", target_os = "ios"))
-    ))]
+    #[cfg(feature = "flutter")]
     ControllingSessionCount(usize),
-    #[cfg(target_os = "linux")]
-    TerminalSessionCount(usize),
-    #[cfg(target_os = "windows")]
-    PortForwardSessionCount(Option<usize>),
     SocksWs(Option<Box<(Option<config::Socks5Server>, String)>>),
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     Whiteboard((String, crate::whiteboard::CustomEvent)),
     ControlPermissionsRemoteModify(Option<bool>),
-    #[cfg(target_os = "windows")]
-    FileTransferEnabledState(Option<bool>),
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -427,7 +380,6 @@ pub async fn start(postfix: &str) -> ResultType<()> {
 
 pub async fn new_listener(postfix: &str) -> ResultType<Incoming> {
     let path = Config::ipc_path(postfix);
-    #[cfg(not(any(windows, target_os = "android", target_os = "ios")))]
     check_pid(postfix).await;
     let mut endpoint = Endpoint::new(path.clone());
     match SecurityAttributes::allow_everyone_create() {
@@ -437,7 +389,6 @@ pub async fn new_listener(postfix: &str) -> ResultType<Incoming> {
     match endpoint.incoming() {
         Ok(incoming) => {
             log::info!("Started ipc{} server at path: {}", postfix, &path);
-            #[cfg(not(windows))]
             {
                 use std::os::unix::fs::PermissionsExt;
                 std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o0777)).ok();
@@ -530,7 +481,6 @@ async fn handle(data: Data, stream: &mut Connection) {
             let t = crate::server::CLICK_TIME.load(Ordering::SeqCst);
             allow_err!(stream.send(&Data::ClickTime(t)).await);
         }
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         Data::MouseMoveTime(_) => {
             let t = crate::server::MOUSE_MOVE_TIME.load(Ordering::SeqCst);
             allow_err!(stream.send(&Data::MouseMoveTime(t)).await);
@@ -538,33 +488,21 @@ async fn handle(data: Data, stream: &mut Connection) {
         Data::Close => {
             log::info!("Receive close message");
             if EXIT_RECV_CLOSE.load(Ordering::SeqCst) {
-                #[cfg(not(target_os = "android"))]
-                crate::server::input_service::fix_key_down_timeout_at_exit();
+                    crate::server::input_service::fix_key_down_timeout_at_exit();
                 if is_server() {
                     let _ = privacy_mode::turn_off_privacy(0, Some(PrivacyModeState::OffByPeer));
                 }
-                #[cfg(any(target_os = "macos", target_os = "linux"))]
                 if crate::is_main() {
                     // below part is for main windows can be reopen during rustdesk installation and installing service from UI
                     // this make new ipc server (domain socket) can be created.
                     std::fs::remove_file(&Config::ipc_path("")).ok();
-                    #[cfg(target_os = "linux")]
-                    {
-                        hbb_common::sleep((crate::platform::SERVICE_INTERVAL * 2) as f32 / 1000.0)
-                            .await;
-                        // https://github.com/rustdesk/rustdesk/discussions/9254
-                        crate::run_me::<&str>(vec!["--no-server"]).ok();
-                    }
-                    #[cfg(target_os = "macos")]
-                    {
-                        // our launchagent interval is 1 second
-                        hbb_common::sleep(1.5).await;
-                        std::process::Command::new("open")
-                            .arg("-n")
-                            .arg(&format!("/Applications/{}.app", crate::get_app_name()))
-                            .spawn()
-                            .ok();
-                    }
+                    // our launchagent interval is 1 second
+                    hbb_common::sleep(1.5).await;
+                    std::process::Command::new("open")
+                        .arg("-n")
+                        .arg(&format!("/Applications/{}.app", crate::get_app_name()))
+                        .spawn()
+                        .ok();
                     // leave above open a little time
                     hbb_common::sleep(0.3).await;
                     // in case below exit failed
@@ -722,16 +660,6 @@ async fn handle(data: Data, stream: &mut Connection) {
                     .await
             );
         }
-        #[cfg(windows)]
-        Data::SyncWinCpuUsage(None) => {
-            allow_err!(
-                stream
-                    .send(&Data::SyncWinCpuUsage(
-                        hbb_common::platform::windows::cpu_uage_one_minute()
-                    ))
-                    .await
-            );
-        }
         Data::TestRendezvousServer => {
             crate::test_rendezvous_server();
         }
@@ -745,37 +673,16 @@ async fn handle(data: Data, stream: &mut Connection) {
             );
         }
         #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         Data::Plugin(plugin) => crate::plugin::ipc::handle_plugin(plugin, stream).await,
-        #[cfg(windows)]
-        Data::ControlledSessionCount(_) => {
-            allow_err!(
-                stream
-                    .send(&Data::ControlledSessionCount(
-                        crate::Connection::alive_conns().len()
-                    ))
-                    .await
-            );
-        }
-        #[cfg(all(
-            feature = "flutter",
-            not(any(target_os = "android", target_os = "ios"))
-        ))]
+        #[cfg(feature = "flutter")]
         Data::ControllingSessionCount(count) => {
             crate::updater::update_controlling_session_count(count);
         }
-        #[cfg(target_os = "linux")]
-        Data::TerminalSessionCount(_) => {
-            let count = crate::terminal_service::get_terminal_session_count(true);
-            allow_err!(stream.send(&Data::TerminalSessionCount(count)).await);
-        }
         #[cfg(feature = "hwcodec")]
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         Data::CheckHwcodec => {
             scrap::hwcodec::start_check_process();
         }
         #[cfg(feature = "hwcodec")]
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         Data::HwCodecConfig(c) => {
             match c {
                 None => {
@@ -794,27 +701,9 @@ async fn handle(data: Data, stream: &mut Connection) {
         Data::WaylandScreencastRestoreToken((key, value)) => {
             let v = if value == "get" {
                 let opt = get_local_option(key.clone());
-                #[cfg(not(target_os = "linux"))]
-                {
-                    Some(opt)
-                }
-                #[cfg(target_os = "linux")]
-                {
-                    let v = if opt.is_empty() {
-                        if scrap::wayland::pipewire::is_rdp_session_hold() {
-                            "fake token".to_string()
-                        } else {
-                            "".to_owned()
-                        }
-                    } else {
-                        opt
-                    };
-                    Some(v)
-                }
+                Some(opt)
             } else if value == "clear" {
                 set_local_option(key.clone(), "".to_owned());
-                #[cfg(target_os = "linux")]
-                scrap::wayland::pipewire::close_session();
                 Some("".to_owned())
             } else {
                 None
@@ -835,38 +724,8 @@ async fn handle(data: Data, stream: &mut Connection) {
         }
         Data::InstallOption(opt) => match opt {
             Some((_k, _v)) => {
-                #[cfg(target_os = "windows")]
-                if let Err(e) = crate::platform::windows::update_install_option(&_k, &_v) {
-                    log::error!(
-                        "Failed to update install option \"{}\" to \"{}\", error: {}",
-                        &_k,
-                        &_v,
-                        e
-                    );
-                }
             }
             None => {
-                // `None` is usually used to get values.
-                // This branch is left blank for unification and further use.
-            }
-        },
-        #[cfg(target_os = "windows")]
-        Data::PortForwardSessionCount(c) => match c {
-            None => {
-                let count = crate::server::AUTHED_CONNS
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .filter(|c| c.conn_type == crate::server::AuthConnType::PortForward)
-                    .count();
-                allow_err!(
-                    stream
-                        .send(&Data::PortForwardSessionCount(Some(count)))
-                        .await
-                );
-            }
-            _ => {
-                // Port forward session count is only a get value.
             }
         },
         Data::ControlPermissionsRemoteModify(_) => {
@@ -876,21 +735,6 @@ async fn handle(data: Data, stream: &mut Connection) {
             allow_err!(
                 stream
                     .send(&Data::ControlPermissionsRemoteModify(state))
-                    .await
-            );
-        }
-        #[cfg(target_os = "windows")]
-        Data::FileTransferEnabledState(_) => {
-            use hbb_common::rendezvous_proto::control_permissions::Permission;
-            let state = crate::server::get_control_permission_state(Permission::file, false);
-            let enabled = state.unwrap_or_else(|| {
-                crate::server::Connection::is_permission_enabled_locally(
-                    config::keys::OPTION_ENABLE_FILE_TRANSFER,
-                )
-            });
-            allow_err!(
-                stream
-                    .send(&Data::FileTransferEnabledState(Some(enabled)))
                     .await
             );
         }
@@ -904,91 +748,12 @@ pub async fn connect(ms_timeout: u64, postfix: &str) -> ResultType<ConnectionTmp
     Ok(ConnectionTmpl::new(client))
 }
 
-#[cfg(target_os = "linux")]
-#[tokio::main(flavor = "current_thread")]
-pub async fn start_pa() {
-    use crate::audio_service::AUDIO_DATA_SIZE_U8;
-
-    match new_listener("_pa").await {
-        Ok(mut incoming) => {
-            loop {
-                if let Some(result) = incoming.next().await {
-                    match result {
-                        Ok(stream) => {
-                            let mut stream = Connection::new(stream);
-                            let mut device: String = "".to_owned();
-                            if let Some(Ok(Some(Data::Config((_, Some(x)))))) =
-                                stream.next_timeout2(1000).await
-                            {
-                                device = x;
-                            }
-                            if !device.is_empty() {
-                                device = crate::platform::linux::get_pa_source_name(&device);
-                            }
-                            if device.is_empty() {
-                                device = crate::platform::linux::get_pa_monitor();
-                            }
-                            if device.is_empty() {
-                                continue;
-                            }
-                            let spec = pulse::sample::Spec {
-                                format: pulse::sample::Format::F32le,
-                                channels: 2,
-                                rate: crate::platform::PA_SAMPLE_RATE,
-                            };
-                            log::info!("pa monitor: {:?}", device);
-                            // systemctl --user status pulseaudio.service
-                            let mut buf: Vec<u8> = vec![0; AUDIO_DATA_SIZE_U8];
-                            match psimple::Simple::new(
-                                None,                             // Use the default server
-                                &crate::get_app_name(),           // Our application’s name
-                                pulse::stream::Direction::Record, // We want a record stream
-                                Some(&device),                    // Use the default device
-                                "record",                         // Description of our stream
-                                &spec,                            // Our sample format
-                                None,                             // Use default channel map
-                                None, // Use default buffering attributes
-                            ) {
-                                Ok(s) => loop {
-                                    if let Ok(_) = s.read(&mut buf) {
-                                        let out =
-                                            if buf.iter().filter(|x| **x != 0).next().is_none() {
-                                                vec![]
-                                            } else {
-                                                buf.clone()
-                                            };
-                                        if let Err(err) = stream.send_raw(out.into()).await {
-                                            log::error!("Failed to send audio data:{}", err);
-                                            break;
-                                        }
-                                    }
-                                },
-                                Err(err) => {
-                                    log::error!("Could not create simple pulse: {}", err);
-                                }
-                            }
-                        }
-                        Err(err) => {
-                            log::error!("Couldn't get pa client: {:?}", err);
-                        }
-                    }
-                }
-            }
-        }
-        Err(err) => {
-            log::error!("Failed to start pa ipc server: {}", err);
-        }
-    }
-}
-
 #[inline]
-#[cfg(not(windows))]
 fn get_pid_file(postfix: &str) -> String {
     let path = Config::ipc_path(postfix);
     format!("{}.pid", path)
 }
 
-#[cfg(not(any(windows, target_os = "android", target_os = "ios")))]
 async fn check_pid(postfix: &str) {
     let pid_file = get_pid_file(postfix);
     if let Ok(mut file) = File::open(&pid_file) {
@@ -1018,7 +783,6 @@ async fn check_pid(postfix: &str) {
 }
 
 #[inline]
-#[cfg(not(windows))]
 fn write_pid(postfix: &str) {
     let path = get_pid_file(postfix);
     if let Ok(mut file) = File::create(&path) {
@@ -1163,7 +927,6 @@ pub fn set_permanent_password(v: String) -> ResultType<()> {
 }
 
 #[cfg(feature = "flutter")]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn set_unlock_pin(v: String, translate: bool) -> ResultType<()> {
     let v = v.trim().to_owned();
     let min_len = 4;
@@ -1190,7 +953,6 @@ pub fn set_unlock_pin(v: String, translate: bool) -> ResultType<()> {
 }
 
 #[cfg(feature = "flutter")]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn get_unlock_pin() -> String {
     if let Ok(Some(v)) = get_config("unlock-pin") {
         Config::set_unlock_pin(&v);
@@ -1201,7 +963,6 @@ pub fn get_unlock_pin() -> String {
 }
 
 #[cfg(feature = "flutter")]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn get_trusted_devices() -> String {
     if let Ok(Some(v)) = get_config("trusted-devices") {
         v
@@ -1211,14 +972,12 @@ pub fn get_trusted_devices() -> String {
 }
 
 #[cfg(feature = "flutter")]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn remove_trusted_devices(hwids: Vec<Bytes>) {
     Config::remove_trusted_devices(&hwids);
     allow_err!(set_data(&Data::RemoveTrustedDevices(hwids)));
 }
 
 #[cfg(feature = "flutter")]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn clear_trusted_devices() {
     Config::clear_trusted_devices();
     allow_err!(set_data(&Data::ClearTrustedDevices));
@@ -1428,18 +1187,7 @@ pub async fn notify_server_to_check_hwcodec() -> ResultType<()> {
     Ok(())
 }
 
-#[cfg(target_os = "windows")]
-pub async fn get_port_forward_session_count(ms_timeout: u64) -> ResultType<usize> {
-    let mut c = connect(ms_timeout, "").await?;
-    c.send(&Data::PortForwardSessionCount(None)).await?;
-    if let Some(Data::PortForwardSessionCount(Some(count))) = c.next_timeout(ms_timeout).await? {
-        return Ok(count);
-    }
-    bail!("Failed to get port forward session count");
-}
-
 #[cfg(feature = "hwcodec")]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tokio::main(flavor = "current_thread")]
 pub async fn get_hwcodec_config_from_server() -> ResultType<()> {
     if !scrap::codec::enable_hwcodec_option() || scrap::hwcodec::HwCodecConfig::already_set() {
@@ -1462,7 +1210,6 @@ pub async fn get_hwcodec_config_from_server() -> ResultType<()> {
 }
 
 #[cfg(feature = "hwcodec")]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn client_get_hwcodec_config_thread(wait_sec: u64) {
     static ONCE: std::sync::Once = std::sync::Once::new();
     if !crate::platform::is_installed()
@@ -1529,27 +1276,12 @@ pub async fn clear_wayland_screencast_restore_token(key: String) -> ResultType<b
     return Ok(false);
 }
 
-#[cfg(all(
-    feature = "flutter",
-    not(any(target_os = "android", target_os = "ios"))
-))]
+#[cfg(feature = "flutter")]
 #[tokio::main(flavor = "current_thread")]
 pub async fn update_controlling_session_count(count: usize) -> ResultType<()> {
     let mut c = connect(1000, "").await?;
     c.send(&Data::ControllingSessionCount(count)).await?;
     Ok(())
-}
-
-#[cfg(target_os = "linux")]
-#[tokio::main(flavor = "current_thread")]
-pub async fn get_terminal_session_count() -> ResultType<usize> {
-    let ms_timeout = 1_000;
-    let mut c = connect(ms_timeout, "").await?;
-    c.send(&Data::TerminalSessionCount(0)).await?;
-    if let Some(Data::TerminalSessionCount(c)) = c.next_timeout(ms_timeout).await? {
-        return Ok(c);
-    }
-    Ok(0)
 }
 
 async fn handle_wayland_screencast_restore_token(

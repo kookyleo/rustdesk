@@ -151,31 +151,14 @@ async fn start_whiteboard_() -> ResultType<()> {
     if let Ok(s) = ipc::connect(1000, "_whiteboard").await {
         stream = Some(s);
     } else {
-        #[allow(unused_mut)]
-        #[allow(unused_assignments)]
-        let mut args = vec!["--whiteboard"];
-        #[allow(unused_mut)]
-        #[cfg(target_os = "linux")]
-        let mut user = None;
+        let args = vec!["--whiteboard"];
 
         let run_done;
         if crate::platform::is_root() {
             let mut res = Ok(None);
             for _ in 0..10 {
-                #[cfg(not(any(target_os = "linux")))]
-                {
-                    log::debug!("Start whiteboard");
-                    res = crate::platform::run_as_user(args.clone());
-                }
-                #[cfg(target_os = "linux")]
-                {
-                    log::debug!("Start whiteboard");
-                    res = crate::platform::run_as_user(
-                        args.clone(),
-                        user.clone(),
-                        None::<(&str, &str)>,
-                    );
-                }
+                log::debug!("Start whiteboard");
+                res = crate::platform::run_as_user(args.clone());
                 if res.is_ok() {
                     break;
                 }

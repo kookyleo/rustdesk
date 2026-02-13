@@ -92,24 +92,8 @@ lazy_static::lazy_static! {
     static ref MONITOR_INDICES: Mutex<HashSet<u32>> = Mutex::new(HashSet::new());
 }
 
-#[cfg(target_os = "windows")]
-fn get_lib_name() -> String {
-    format!("{}.dll", LIB_NAME_VIRTUAL_DISPLAY)
-}
-
-#[cfg(target_os = "linux")]
-fn get_lib_name() -> String {
-    format!("lib{}.so", LIB_NAME_VIRTUAL_DISPLAY)
-}
-
-#[cfg(target_os = "macos")]
 fn get_lib_name() -> String {
     format!("lib{}.dylib", LIB_NAME_VIRTUAL_DISPLAY)
-}
-
-#[cfg(windows)]
-pub fn get_driver_install_path() -> Option<&'static str> {
-    Some(LIB_WRAPPER.lock().unwrap().get_driver_install_path?())
 }
 
 pub fn is_device_created() -> bool {
@@ -155,42 +139,4 @@ pub fn uninstall_driver(reboot_required: &mut bool) -> ResultType<()> {
         .unwrap()
         .uninstall_driver
         .ok_or(anyhow::Error::msg("uninstall_driver method not found"))?(reboot_required)
-}
-
-#[cfg(windows)]
-pub fn plug_in_monitor(monitor_index: u32) -> ResultType<()> {
-    let mut lock = MONITOR_INDICES.lock().unwrap();
-    if lock.contains(&monitor_index) {
-        return Ok(());
-    }
-    let f = LIB_WRAPPER
-        .lock()
-        .unwrap()
-        .plug_in_monitor
-        .ok_or(anyhow::Error::msg("plug_in_monitor method not found"))?;
-    f(monitor_index, 0, 20)?;
-    lock.insert(monitor_index);
-    Ok(())
-}
-
-#[cfg(windows)]
-pub fn plug_out_monitor(monitor_index: u32) -> ResultType<()> {
-    let f = LIB_WRAPPER
-        .lock()
-        .unwrap()
-        .plug_out_monitor
-        .ok_or(anyhow::Error::msg("plug_out_monitor method not found"))?;
-    f(monitor_index)?;
-    MONITOR_INDICES.lock().unwrap().remove(&monitor_index);
-    Ok(())
-}
-
-#[cfg(windows)]
-pub fn update_monitor_modes(monitor_index: u32, modes: &[MonitorMode]) -> ResultType<()> {
-    let f = LIB_WRAPPER
-        .lock()
-        .unwrap()
-        .update_monitor_modes
-        .ok_or(anyhow::Error::msg("update_monitor_modes method not found"))?;
-    f(monitor_index, modes.len() as _, modes.as_ptr() as _)
 }

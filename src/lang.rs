@@ -97,7 +97,6 @@ pub const LANGS: &[(&str, &str)] = &[
     ("fi", "Suomi"),
 ];
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn translate(name: String) -> String {
     let locale = sys_locale::get_locale().unwrap_or_default();
     translate_locale(name, &locale)

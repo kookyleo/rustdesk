@@ -1,5 +1,3 @@
-#![windows_subsystem = "windows"]
-
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -8,19 +6,12 @@ use std::{
 use bin_reader::BinaryReader;
 
 pub mod bin_reader;
-#[cfg(windows)]
-mod ui;
 
-#[cfg(windows)]
-const APP_METADATA: &[u8] = include_bytes!("../app_metadata.toml");
-#[cfg(not(windows))]
 const APP_METADATA: &[u8] = &[];
 const APP_METADATA_CONFIG: &str = "meta.toml";
 const META_LINE_PREFIX_TIMESTAMP: &str = "timestamp = ";
 const APP_PREFIX: &str = "rustdesk";
 const APPNAME_RUNTIME_ENV_KEY: &str = "RUSTDESK_APPNAME";
-#[cfg(windows)]
-const SET_FOREGROUND_WINDOW_ENV_KEY: &str = "SET_FOREGROUND_WINDOW";
 
 fn is_timestamp_matches(dir: &Path, ts: &mut u64) -> bool {
     let Ok(app_metadata) = std::str::from_utf8(APP_METADATA) else {
@@ -80,55 +71,16 @@ fn setup(
 
     let mut ts = 0;
     if clear || !is_timestamp_matches(&dir, &mut ts) {
-        #[cfg(windows)]
-        if _args.is_empty() {
-            *_ui = true;
-            ui::setup();
-        }
         std::fs::remove_dir_all(&dir).ok();
     }
     for file in reader.files.iter() {
         file.write_to_file(&dir);
     }
     write_meta(&dir, ts);
-    #[cfg(windows)]
-    win::copy_runtime_broker(&dir);
-    #[cfg(linux)]
-    reader.configure_permission(&dir);
     Some(dir.join(&reader.exe))
 }
 
 fn use_null_stdio() -> bool {
-    #[cfg(windows)]
-    {
-        // When running in CMD on Windows 7, using Stdio::inherit() with spawn returns an "invalid handle" error.
-        // Since using Stdio::null() didn’t cause any issues, and determining whether the program is launched from CMD or by double-clicking would require calling more APIs during startup, we also use Stdio::null() when launched by double-clicking on Windows 7.
-        let is_windows_7 = is_windows_7();
-        println!("is windows7: {}", is_windows_7);
-        return is_windows_7;
-    }
-    #[cfg(not(windows))]
-    false
-}
-
-#[cfg(windows)]
-fn is_windows_7() -> bool {
-    use windows::Wdk::System::SystemServices::RtlGetVersion;
-    use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
-
-    unsafe {
-        let mut version_info = OSVERSIONINFOW::default();
-        version_info.dwOSVersionInfoSize = std::mem::size_of::<OSVERSIONINFOW>() as u32;
-
-        if RtlGetVersion(&mut version_info).is_ok() {
-            // Windows 7 is version 6.1
-            println!(
-                "Windows version: {}.{}",
-                version_info.dwMajorVersion, version_info.dwMinorVersion
-            );
-            return version_info.dwMajorVersion == 6 && version_info.dwMinorVersion == 1;
-        }
-    }
     false
 }
 
@@ -140,14 +92,6 @@ fn execute(path: PathBuf, args: Vec<String>, _ui: bool) {
     // run executable
     let mut cmd = Command::new(path);
     cmd.args(args);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(winapi::um::winbase::CREATE_NO_WINDOW);
-        if _ui {
-            cmd.env(SET_FOREGROUND_WINDOW_ENV_KEY, "1");
-        }
-    }
 
     cmd.env(APPNAME_RUNTIME_ENV_KEY, exe_name);
     if use_null_stdio() {
@@ -160,18 +104,6 @@ fn execute(path: PathBuf, args: Vec<String>, _ui: bool) {
             .stderr(Stdio::inherit());
     }
     let _child = cmd.spawn();
-
-    #[cfg(windows)]
-    if _ui {
-        match _child {
-            Ok(child) => unsafe {
-                winapi::um::winuser::AllowSetForegroundWindow(child.id() as u32);
-            },
-            Err(e) => {
-                eprintln!("{:?}", e);
-            }
-        }
-    }
 }
 
 fn main() {
@@ -187,9 +119,6 @@ fn main() {
         i += 1;
     }
     let click_setup = args.is_empty() && arg_exe.to_lowercase().ends_with("install.exe");
-    #[cfg(windows)]
-    let quick_support = args.is_empty() && win::is_quick_support_exe(&arg_exe);
-    #[cfg(not(windows))]
     let quick_support = false;
 
     let mut ui = false;
@@ -207,42 +136,5 @@ fn main() {
             args = vec!["--quick_support".to_owned()];
         }
         execute(exe, args, ui);
-    }
-}
-
-#[cfg(windows)]
-mod win {
-    use std::{fs, os::windows::process::CommandExt, path::Path, process::Command};
-
-    // Used for privacy mode(magnifier impl).
-    pub const RUNTIME_BROKER_EXE: &'static str = "C:\\Windows\\System32\\RuntimeBroker.exe";
-    pub const WIN_TOPMOST_INJECTED_PROCESS_EXE: &'static str = "RuntimeBroker_rustdesk.exe";
-
-    pub(super) fn copy_runtime_broker(dir: &Path) {
-        let src = RUNTIME_BROKER_EXE;
-        let tgt = WIN_TOPMOST_INJECTED_PROCESS_EXE;
-        let target_file = dir.join(tgt);
-        if target_file.exists() {
-            if let (Ok(src_file), Ok(tgt_file)) = (fs::read(src), fs::read(&target_file)) {
-                let src_md5 = format!("{:x}", md5::compute(&src_file));
-                let tgt_md5 = format!("{:x}", md5::compute(&tgt_file));
-                if src_md5 == tgt_md5 {
-                    return;
-                }
-            }
-        }
-        let _allow_err = Command::new("taskkill")
-            .args(&["/F", "/IM", "RuntimeBroker_rustdesk.exe"])
-            .creation_flags(winapi::um::winbase::CREATE_NO_WINDOW)
-            .output();
-        let _allow_err = std::fs::copy(src, &format!("{}\\{}", dir.to_string_lossy(), tgt));
-    }
-
-    /// Check if the executable is a Quick Support version.
-    /// Note: This function must be kept in sync with `src/core_main.rs`.
-    #[inline]
-    pub(super) fn is_quick_support_exe(exe: &str) -> bool {
-        let exe = exe.to_lowercase();
-        exe.contains("-qs-") || exe.contains("-qs.exe") || exe.contains("_qs.exe")
     }
 }

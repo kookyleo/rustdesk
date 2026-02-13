@@ -357,8 +357,6 @@ impl InvokeUiSession for SciterHandler {
 
     fn switch_back(&self, _id: &str) {}
 
-    fn portable_service_running(&self, _running: bool) {}
-
     fn on_voice_call_started(&self) {
         self.call("onVoiceCallStart", &make_args!());
     }
@@ -678,7 +676,7 @@ impl SciterSession {
     }
 
     fn has_file_clipboard(&self) -> bool {
-        cfg!(any(target_os = "windows", feature = "unix-file-copy-paste"))
+        cfg!(feature = "unix-file-copy-paste")
     }
 
     fn get_port_forwards(&mut self) -> Value {
@@ -871,9 +869,6 @@ impl SciterSession {
     }
 
     fn get_printer_names(&self) -> Value {
-        #[cfg(target_os = "windows")]
-        let printer_names = crate::platform::windows::get_printer_names().unwrap_or_default();
-        #[cfg(not(target_os = "windows"))]
         let printer_names: Vec<String> = vec![];
         let mut v = Value::array(0);
         for name in printer_names {

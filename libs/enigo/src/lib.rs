@@ -59,24 +59,9 @@ extern crate objc;
 
 // TODO(dustin) use interior mutability not &mut self
 
-#[cfg(target_os = "windows")]
-mod win;
-#[cfg(target_os = "windows")]
-pub use win::Enigo;
-#[cfg(target_os = "windows")]
-pub use win::ENIGO_INPUT_EXTRA_VALUE;
-
-#[cfg(target_os = "macos")]
 mod macos;
-#[cfg(target_os = "macos")]
 pub use macos::Enigo;
-#[cfg(target_os = "macos")]
 pub use macos::ENIGO_INPUT_EXTRA_VALUE;
-
-#[cfg(target_os = "linux")]
-mod linux;
-#[cfg(target_os = "linux")]
-pub use crate::linux::Enigo;
 
 /// DSL parser module
 pub mod dsl;
@@ -498,9 +483,6 @@ pub trait KeyboardControllable {
     fn get_key_state(&mut self, key: Key) -> bool;
 }
 
-#[cfg(any(target_os = "android", target_os = "ios"))]
-struct Enigo;
-
 impl Enigo {
     /// Constructs a new `Enigo` instance.
     ///
@@ -511,9 +493,6 @@ impl Enigo {
     /// let mut enigo = Enigo::new();
     /// ```
     pub fn new() -> Self {
-        #[cfg(any(target_os = "android", target_os = "ios"))]
-        return Enigo {};
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         Self::default()
     }
 }
